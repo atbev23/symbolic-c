@@ -97,8 +97,6 @@ You’ll be greeted with a command-line interface for entering and evaluating ex
   Designed for the Raspberry Pi Zero for low-power, portable math computing.
 - **Custom PCB:**  
   Planned to integrate Pi Zero, power supply, and user IO (buttons, encoders).
-- **Arduino GUI:**  
-  Arduino microcontroller will handle display (TFT/LCD/OLED) and user input, communicating with the Pi Zero over UART/serial.
 
 ---
 
@@ -133,4 +131,3 @@ See [LICENSE](LICENSE) for details.
 
 - [Wikipedia: Computer Algebra Systems](https://en.wikipedia.org/wiki/Computer_algebra_system)
 - [Shunting Yard Algorithm](https://en.wikipedia.org/wiki/Shunting_yard_algorithm)
-- [SymPy](https://www.sympy.org/) and other symbolic math projects for inspiration
