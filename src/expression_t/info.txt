@@ -1,0 +1,141 @@
+
+Associative Property: (a+b)+c == a+(b+c), (a*b)*c == a*(b*c)
+
+
+
+    // create an empty list to store values
+    double vals[terms.top];
+    int i = 0;
+    // while the stack of nodes isn't empty and the top node's token is a number,
+    while (!stack_is_empty(&terms) && ((ast_node_t*)stack_peek(&terms))->token->type == TOKEN_NUMBER) {
+        // pop the top node from the stack
+        const ast_node_t* num = stack_pop(&terms);
+        // extract its value and store it in the list
+        vals[i] = num->token->number.value;
+        // free the node
+        node_pool_free_node(expr->node_pool, num);
+        // increment counter and jump to top
+        i++;
+    }
+
+    double new_val = (op_type == MUL) ? 1.0 : 0.0;
+    const int val_count = i;
+    switch (op_type) {
+        case ADD:
+            for (int j = 0; j < val_count; j++) {
+                new_val += vals[j];
+            }
+            break;
+        case MUL:
+            for (int j = 0; j < val_count; j++) {
+                new_val *= vals[j];
+            }
+            break;
+        default: break;
+    }
+    ast_node_t* new_node = node_pool_alloc(expr->node_pool);
+    new_node->token = num_token_init_double(expr->token_pool, new_val);
+    new_node->left = NULL;
+    new_node->right = NULL;
+    stack_push(&terms, new_node);
+
+    //ast_node_t* rebuilt = rebuild_commutative_subtree(&terms, expr->node_pool, node->token);
+
+    return rebuild_commutative_subtree(&terms, expr->node_pool, node->token);
+}
+
+
+#include "queue_t.h"  // make sure queue_t works with ast_node_t*
+
+void collect_terms(const ast_node_t* node, queue_t* queue, const operator_type_t type) {
+    if (!is_operator_node(node, type)) {
+        queue_enqueue(queue, node);
+        return;
+    }
+    collect_terms(node->left, queue, type);
+    collect_terms(node->right, queue, type);
+}
+
+ast_node_t* rebuild_commutative_subtree(const expression_t* expr, queue_t* queue, const char* op) {
+    if (queue_is_empty(queue)) return NULL;
+    ast_node_t* left = (ast_node_t*)queue_dequeue(queue);
+
+    while (!queue_is_empty(queue)) {
+        ast_node_t* right = (ast_node_t*)queue_dequeue(queue);
+
+        ast_node_t* new_node = node_pool_alloc(expr->node_pool);
+        if (!new_node) return NULL;
+
+        new_node->token = op_token_init(expr->token_pool, *op);
+        new_node->left = left;
+        new_node->right = right;
+
+        left = new_node;
+    }
+    return left;
+}
+
+void associative_property(ast_node_t* node, queue_t* queue) {
+    if (!node || node->token->type != TOKEN_OPERATOR) return;
+
+    const operator_type_t op_type = node->token->operator->type;
+    if (op_type != ADD && op_type != MUL) return;
+
+    collect_terms(node, queue, op_type);
+}
+
+int compare_types(const void* a, const void* b) {
+    const ast_node_t* node_a = *(const ast_node_t**)a;
+    const ast_node_t* node_b = *(const ast_node_t**)b;
+    return (int)node_a->token->type - (int)node_b->token->type;
+}
+
+ast_node_t* commutative_property(const expression_t* expr, ast_node_t* node) {
+    if (!node || node->token->type != TOKEN_OPERATOR) return node;
+
+    const operator_type_t op_type = node->token->operator->type;
+    if (op_type != ADD && op_type != MUL) return node;
+
+    queue_t term_queue;
+    queue_init(&term_queue);
+    associative_property(node, &term_queue);
+
+    if (term_queue.size == 0) return node;
+
+    ast_node_t* term_array[MAX_QUEUE_SIZE];
+    for (int i = 0; i < term_queue.size; ++i)
+        term_array[i] = (ast_node_t*)term_queue.items[(term_queue.front + i) % MAX_QUEUE_SIZE];
+
+    qsort(term_array, term_queue.size, sizeof(ast_node_t*), compare_types);
+
+    double vals[MAX_QUEUE_SIZE];
+    int i = 0;
+    while (i < term_queue.size && term_array[i]->token->type == TOKEN_NUMBER) {
+        vals[i] = term_array[i]->token->number.value;
+        i++;
+    }
+
+    int new_size = term_queue.size;
+    if (i >= 2) {
+        double new_val = (op_type == MUL) ? 1 : 0;
+        for (int j = 0; j < i; j++)
+            new_val = (op_type == ADD) ? new_val + vals[j] : new_val * vals[j];
+
+        ast_node_t* new_node = node_pool_alloc(expr->node_pool);
+        new_node->token = num_token_init_double(expr->token_pool, new_val);
+        new_node->left = NULL;
+        new_node->right = NULL;
+
+        term_array[0] = new_node;
+        for (int j = 1; j < new_size - i + 1; j++)
+            term_array[j] = term_array[j + i - 1];
+
+        new_size = new_size - i + 1;
+    }
+
+    queue_init(&term_queue);
+    for (int j = 0; j < new_size; j++)
+        queue_enqueue(&term_queue, term_array[j]);
+
+    return rebuild_commutative_subtree(expr, &term_queue, node->token->operator->operator);
+}
