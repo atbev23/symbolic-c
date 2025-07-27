@@ -16,22 +16,25 @@ int main(void) {
     static node_pool_t node_pool;
     node_pool_init(&node_pool);
 
+    // initialize a symbol table
     symbol_table_t table = {0};
     symbol_table_init(&table);
 
-    symbol_t* sym_a = sym_init(&table, "a");
-    symbol_t* sym_m = sym_init(&table, "m");
-    symbol_t* sym_n = sym_init(&table, "n");
-    //symbol_t* sym_d = sym_init(&table, "d");
-    if (!sym_a || !sym_m || !sym_n) {
-        return -1;
-    }
+    // fill it with symbols you plan to use
+    sym_init(&table, "a");
+    sym_init(&table, "m");
+    sym_init(&table, "n");
 
+    // initialize an expression and link it to token and node pools
     expression_t expr = {0};
     expr.token_pool = &token_pool;
     expr.node_pool = &node_pool;
 
-    strncpy(expr.expression, "(a^(3*n))*(a^2)", MAX_EXPR_LEN);
+    // ask the user for an expression, entered as a string
+    printf("Enter an expression: ");
+    fgets(expr.expression, sizeof(expr.expression), stdin);
+
+   // strncpy(expr.expression, "3*a", MAX_EXPR_LEN);
 
     struct timespec start, end;
 

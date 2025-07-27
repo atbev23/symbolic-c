@@ -19,6 +19,7 @@ void expression_init(expression_t* expr_obj, const char* expr_str) {
     //expr_obj->expression[MAX_EXPR_LEN - 1] = '\0';                   // null terminate the expression
 }
 
+// straightforward string to tokens function
 int tokenize(expression_t* expr, symbol_table_t* table) {
     int token_count = 0;
     char buf[MAX_LEXEME_LEN] = {0};
@@ -215,7 +216,7 @@ void free_subtree(token_pool_t* token_pool, node_pool_t* node_pool, ast_node_t* 
 
 
 ast_node_t* identity_property(const expression_t* expr, ast_node_t* node) {
-    // TODO: expand this function to handle sub and div operators (not 'true' identity property but meh they can be converted to additio)
+    // TODO: expand this function to handle sub, div, and power operators (not 'true' identity property but meh they can be converted to addition)
     if (!(node->token->type == TOKEN_OPERATOR && (node->token->operator->type == ADD || node->token->operator->type == MUL))) {
         return node;
     }
@@ -248,18 +249,6 @@ ast_node_t* identity_property(const expression_t* expr, ast_node_t* node) {
             return kept;
         }
     }
-
-    if (node->token->operator->type == POW) {
-        // if (node->right->token->type == TOKEN_NUMBER && node->right->token->number.value == 0) {
-        //
-        // }
-        if (node->right->token->type == TOKEN_NUMBER && node->right->token->number.value == 1) {
-            ast_node_t* kept = node->left;
-            node_pool_free_node(expr->node_pool, node->right);
-            node_pool_free_node(expr->node_pool, node);  // free current node
-            return kept;
-        }
-    }
     return node;
 }
 
@@ -288,36 +277,48 @@ bool is_operator_node(const ast_node_t* node, const operator_type_t type) {
     return node && node->token->type == TOKEN_OPERATOR && node->token->operator->type == type;
 }
 
-void collect_terms(const ast_node_t* node, stack_t* stack, const operator_type_t type) {
+void collect_terms(/*token_pool_t* token_pool,node_pool_t* node_pool,*/ const ast_node_t* node, stack_t* stack, const operator_type_t type) {
     if (!is_operator_node(node, type)) {
         stack_push(stack, (ast_node_t*)node);
         return;
     }
-    collect_terms(node->left, stack, type);
-    collect_terms(node->right, stack, type);
+
+    collect_terms(/*token_pool, node_pool,*/ node->left, stack, type);
+    collect_terms(/*token_pool, node_pool,*/ node->right, stack, type);
 }
 
-ast_node_t* rebuild_commutative_subtree(const expression_t* expr, stack_t* stack, const char* op) {
+ast_node_t* rebuild_commutative_subtree(token_pool_t* token_pool, node_pool_t* node_pool, stack_t* stack, const char* op) {
+    // if the stack is empty, return immediately a NULL
     if (stack_is_empty(stack)) return NULL;
-    ast_node_t* left = stack_pop(stack);
+
+    // pop the top node from the stack, copy it, then free the original
+    ast_node_t* original = stack_pop(stack);
+    ast_node_t* left = copy_subtree(token_pool, node_pool, original);
+    free_subtree(token_pool, node_pool, original);
 
     while (!stack_is_empty(stack)) {
-        ast_node_t* right = stack_pop(stack);
+        // again pop the top node from the stack, copy it, then free the original
+        original = stack_pop(stack);
+        ast_node_t* right = copy_subtree(token_pool, node_pool, original);
+        free_subtree(token_pool, node_pool, original);
 
-        ast_node_t* new_node = node_pool_alloc(expr->node_pool);
+        // create a parent node of left and right
+        ast_node_t* new_node = node_pool_alloc(node_pool);
         if (!new_node) return NULL;
 
-        new_node->token = op_token_init(expr->token_pool, *op);
+        new_node->token = op_token_init(token_pool, *op);
         new_node->left = left;
         new_node->right = right;
 
+        // build tree top down, left becomes future left's left child
         left = new_node;
     }
+
     return left;
 }
 
 // associative property returns a left heavy tree, shuffling right associative multiplication and addition to left associative
-void associative_property(ast_node_t* node, stack_t* stack) {
+void associative_property(token_pool_t* token_pool, node_pool_t* node_pool, ast_node_t* node, stack_t* stack) {
     if (!node || node->token->type != TOKEN_OPERATOR) return;
 
     const operator_type_t op_type = node->token->operator->type; // store current operators type
@@ -325,7 +326,7 @@ void associative_property(ast_node_t* node, stack_t* stack) {
     if (op_type != ADD && op_type != MUL) return;  // return unedited node if not mul or add
     //ast_node_t* terms[MAX_TERMS];                       // create a list to store all terms
     //size_t count = 0;
-    collect_terms(node, stack, op_type);                                // collect all terms
+    collect_terms(/*token_pool, node_pool,*/ node, stack, op_type);                                // collect all terms
     // return rebuild_commutative_subtree(stack, pool, node->token);    // rebuild the tree
 }
 
@@ -417,13 +418,17 @@ ast_node_t* distributive_property(token_pool_t* token_pool, node_pool_t* node_po
 }
 
 int compare_types(const void* a, const void* b) {
+    // if (!a || !b) {
+    //     // handle error or return 0 for equality to avoid segfault
+    //     return 0;
+    // }
     const ast_node_t* node_a = *(const ast_node_t**)a;
     const ast_node_t* node_b = *(const ast_node_t**)b;
 
     return (int)node_a->token->type - (int)node_b->token->type; // the enum values of token_type_t
 }
 
-ast_node_t* commutative_property(const expression_t* expr, ast_node_t* node) {
+ast_node_t* commutative_property(token_pool_t* token_pool, node_pool_t* node_pool, ast_node_t* node) {
     if (!node || node->token->type != TOKEN_OPERATOR) return node;
 
     const operator_type_t op_type = node->token->operator->type;
@@ -433,7 +438,7 @@ ast_node_t* commutative_property(const expression_t* expr, ast_node_t* node) {
     stack_init(&terms);
     // TODO: Switch to queue based data structure
 
-    associative_property(node, &terms);
+    associative_property(token_pool, node_pool, node, &terms);
     if (!terms.top) {
         return node;
     }
@@ -455,8 +460,8 @@ ast_node_t* commutative_property(const expression_t* expr, ast_node_t* node) {
     }
     // if two or more numbers are collected
     if (i >= 2) { // if we collect only one number, there is nothing to do
-        // if the operater is MUL, we need to set new_val to 1 (mul by 0 err) or if ADD, set it to 0
-        double new_val = (op_type == MUL) ? 1 : 0;
+        // if the operator is MUL, we need to set new_val to 1 (avoid mul by 0) or if ADD, set it to 0
+        double new_val = op_type == MUL ? 1 : 0;
         switch (op_type) {
             case ADD:
                 for (int j = 0; j < i; j++) {
@@ -471,19 +476,20 @@ ast_node_t* commutative_property(const expression_t* expr, ast_node_t* node) {
             default: break;
         }
 
-        ast_node_t* new_node = node_pool_alloc(expr->node_pool);
-        new_node->token = num_token_init_double(expr->token_pool, new_val);
+        ast_node_t* new_node = node_pool_alloc(node_pool);
+        new_node->token = num_token_init_double(token_pool, new_val);
         new_node->left = NULL;
         new_node->right = NULL;
 
         for (int k = i; k > 0; k--) {
             const ast_node_t* free_node = stack_pop_bottom(&terms);
-            token_pool_free_token(expr->token_pool, free_node->token);
-            node_pool_free_node(expr->node_pool, free_node);
+            //token_pool_free_token(token_pool, free_node->token);
+            //node_pool_free_node(node_pool, free_node);
         }
         stack_push(&terms, new_node);
     }
-    return rebuild_commutative_subtree(expr, &terms, node->token->operator->operator);
+    ast_node_t* new_root = rebuild_commutative_subtree(token_pool, node_pool, &terms, node->token->operator->operator);
+    return new_root;
 }
 
 bool branch_is_equal(ast_node_t* a, ast_node_t* b) {
@@ -633,7 +639,8 @@ void collect_assoc_base_groups(token_pool_t* token_pool, node_pool_t* node_pool,
         // look for a matching base group
         for (int i = 0; i < groups->group_count; i++) {
             // if found, add the right child to its stack of exponents and return
-            if (base->token->symbol->symbol == groups->groups[i].base->token->symbol->symbol) {
+            if (base->token->type == TOKEN_SYMBOL &&
+                base->token->symbol->symbol == groups->groups[i].base->token->symbol->symbol) {
                 stack_push(&groups->groups[i].exponents, exp);
                 return;
             }
@@ -696,7 +703,7 @@ ast_node_t* product_of_powers(token_pool_t* token_pool, node_pool_t* node_pool, 
         const int num_exp = exponents->top + 1;
 
         // sort the base group's exponents, numbers first
-        qsort(exponents->items, num_exp, sizeof(ast_node_t*), compare_types);
+        qsort(&exponents->items, num_exp, sizeof(void*), compare_types);
 
         // Collect the numbers
         double vals[num_exp];
@@ -752,6 +759,8 @@ ast_node_t* product_of_powers(token_pool_t* token_pool, node_pool_t* node_pool, 
         ast_node_t* exp_chain = copy_subtree(token_pool, node_pool, stack_pop(exponents));
 
         // Pop remaining exponents and build right-associative exponent chain: e1 ^ (e2 ^ (e3 ...))
+        // TODO: this function creates nodes for exponent values or one (a^1) whereas it should skip creating nodes
+        //       for OPERATOR_TOKEN->POW and '1'
         while (!stack_is_empty(exponents)) {
             ast_node_t* next_exp = copy_subtree(token_pool, node_pool, stack_pop(exponents));
 
@@ -924,7 +933,7 @@ ast_node_t* simplify(expression_t* expr, ast_node_t* node) {
         case ADD:
             node = zero_property(expr, node); // try zero property
             node = identity_property(expr, node); // try zero property
-            node = commutative_property(expr, node);
+            node = commutative_property(expr->token_pool, expr->node_pool, node);
             return node;
 
         case SUB:
@@ -935,8 +944,8 @@ ast_node_t* simplify(expression_t* expr, ast_node_t* node) {
             node = zero_property(expr, node); // try zero property
             node = identity_property(expr, node); // try zero property
             node = distributive_property(expr->token_pool, expr->node_pool, node);
-            node = commutative_property(expr, node);
-            node = product_of_powers(expr->token_pool, expr->node_pool, node);
+            node = commutative_property(expr->token_pool, expr->node_pool, node);
+            //node = product_of_powers(expr->token_pool, expr->node_pool, node);
             return node;
 
         case DIV:
