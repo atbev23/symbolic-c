@@ -13,6 +13,9 @@
 #include "../node_t/node_pool_t/node_pool_t.h"
 #include "../stack_t/stack_t.h"
 
+#define DEBUG_COMMUTATIVE_PROPERTY
+//#define DEBUG_DISTRIBUTIVE_PROPERTY
+
 void expression_init(expression_t* expr_obj, const char* expr_str) {
     memset(expr_obj, 0, sizeof(expression_t));               // make sure expressiion
     strncpy(expr_obj->expression, expr_str, MAX_EXPR_LEN);  // set the expression
@@ -58,6 +61,7 @@ int tokenize(expression_t* expr, symbol_table_t* table) {
             buf[j] = '\0';
             expr->tokens[token_count++] = num_token_init(expr->token_pool, buf);
             last_token_type = TOKEN_NUMBER;
+            memset(buf, 0, MAX_LEXEME_LEN);
             continue;
         }
     // Handle symbol
@@ -242,7 +246,7 @@ ast_node_t* identity_property(const expression_t* expr, ast_node_t* node) {
             node_pool_free_node(expr->node_pool, node);  // free current node
             return kept;                                                                    // return left node
         }
-        if (node->left->token->type == TOKEN_NUMBER && node->left->token->number.value == 1) {      // for both children of add
+        if (node->left && node->left->token->type == TOKEN_NUMBER && node->left->token->number.value == 1) {      // for both children of add
             ast_node_t* kept = node->right;
             node_pool_free_node(expr->node_pool, node->left);
             node_pool_free_node(expr->node_pool, node);  // free current node
@@ -278,6 +282,10 @@ bool is_operator_node(const ast_node_t* node, const operator_type_t type) {
 }
 
 void collect_terms(/*token_pool_t* token_pool,node_pool_t* node_pool,*/ const ast_node_t* node, stack_t* stack, const operator_type_t type) {
+    if (!node) {
+        return;
+    }
+
     if (!is_operator_node(node, type)) {
         stack_push(stack, (ast_node_t*)node);
         return;
@@ -313,6 +321,10 @@ ast_node_t* rebuild_commutative_subtree(token_pool_t* token_pool, node_pool_t* n
         // build tree top down, left becomes future left's left child
         left = new_node;
     }
+
+#ifdef DEBUG_COMMUTATIVE_PROPERTY
+    print_tree(left);
+#endif
 
     return left;
 }
@@ -418,14 +430,48 @@ ast_node_t* distributive_property(token_pool_t* token_pool, node_pool_t* node_po
 }
 
 int compare_types(const void* a, const void* b) {
-    // if (!a || !b) {
-    //     // handle error or return 0 for equality to avoid segfault
-    //     return 0;
-    // }
     const ast_node_t* node_a = *(const ast_node_t**)a;
     const ast_node_t* node_b = *(const ast_node_t**)b;
 
-    return (int)node_a->token->type - (int)node_b->token->type; // the enum values of token_type_t
+    if (!node_a || !node_b) {
+        // Null goes last in sort order
+        return node_a ? -1 : (node_b ? 1 : 0);
+    }
+    if (!node_a->token || !node_b->token) {
+        return node_a->token ? -1 : (node_b->token ? 1 : 0);
+    }
+
+    return (int)node_a->token->type - (int)node_b->token->type;
+}
+
+void print_ast_stack(const stack_t* stack) {
+    printf("Stack contents (top = %d):\n", stack->top);
+    for (int t = 0; t <= stack->top; ++t) {
+        ast_node_t* node = (ast_node_t*)stack->items[t];
+        if (!node) {
+            printf("  [%d]: NULL\n", t);
+            continue;
+        }
+        if (!node->token) {
+            printf("  [%d]: NODE with NULL token\n", t);
+            continue;
+        }
+        switch (node->token->type) {
+            case TOKEN_NUMBER:
+                printf("  [%d]: NUMBER: %f\n", t, node->token->number.value);
+                break;
+            case TOKEN_SYMBOL:
+                printf("  [%d]: SYMBOL: %s\n", t, node->token->symbol->symbol);
+                break;
+            case TOKEN_OPERATOR:
+                printf("  [%d]: OPERATOR: %c\n", t, node->token->operator->operator);
+                break;
+            default:
+                printf("  [%d]: UNKNOWN or OTHER type: %d\n", t, node->token->type);
+                break;
+        }
+    }
+    printf("\n");
 }
 
 ast_node_t* commutative_property(token_pool_t* token_pool, node_pool_t* node_pool, ast_node_t* node) {
@@ -439,15 +485,17 @@ ast_node_t* commutative_property(token_pool_t* token_pool, node_pool_t* node_poo
     // TODO: Switch to queue based data structure
 
     associative_property(token_pool, node_pool, node, &terms);
-    if (!terms.top) {
+    if (terms.top < 0) {
         return node;
     }
-
+#ifdef DEBUG_COMMUTATIVE_PROPERTY
+    print_ast_stack(&terms);
+#endif
     // sort the nodes by comparing each node's token's type (number->symbol->operator)
     // using a c standard sorting algorithm. i think it, quick sort, is pretty nifty in both the
     // algorithm's simplicity, and the fact that the c standard library provides few other
     // niceties to get excited about
-    qsort(&terms.items, terms.top + 1, sizeof(ast_node_t*), compare_types); // c stdio.h function
+    qsort(terms.items, terms.top + 1, sizeof(ast_node_t*), compare_types); // c stdio.h function
     // TODO: when i implement functions, unary operators, etc. check to make sure this still works
 
     double vals[terms.top + 1];
@@ -481,15 +529,15 @@ ast_node_t* commutative_property(token_pool_t* token_pool, node_pool_t* node_poo
         new_node->left = NULL;
         new_node->right = NULL;
 
-        for (int k = i; k > 0; k--) {
+        for (int k = 0; k < i; k++) {
             const ast_node_t* free_node = stack_pop_bottom(&terms);
-            //token_pool_free_token(token_pool, free_node->token);
-            //node_pool_free_node(node_pool, free_node);
+            token_pool_free_token(token_pool, free_node->token);
+            node_pool_free_node(node_pool, free_node);
         }
         stack_push(&terms, new_node);
     }
-    ast_node_t* new_root = rebuild_commutative_subtree(token_pool, node_pool, &terms, node->token->operator->operator);
-    return new_root;
+    //ast_node_t* new_root = rebuild_commutative_subtree(token_pool, node_pool, &terms, node->token->operator->operator);
+    return rebuild_commutative_subtree(token_pool, node_pool, &terms, node->token->operator->operator);
 }
 
 bool branch_is_equal(ast_node_t* a, ast_node_t* b) {
@@ -901,19 +949,14 @@ ast_node_t* solve(token_pool_t* token_pool, node_pool_t* node_pool, ast_node_t* 
             default: return node;
         }
 
-        token_pool_free_token(token_pool, node->token);
-        token_pool_free_token(token_pool, node->left->token);
-        node_pool_free_node(node_pool, node->left);
-        token_pool_free_token(token_pool, node->right->token);
-        node_pool_free_node(node_pool, node->right);
-
         // Allocate a new token and store the number value
-        //ast_node_t* new_node = node_pool_alloc(node_pool);
-        node->token = num_token_init_double(token_pool, new_val);
-        node->left = NULL;
-        node->right = NULL;
+        ast_node_t* new_node = node_pool_alloc(node_pool);
+        new_node->token = num_token_init_double(token_pool, new_val);
+        new_node->left = NULL;
+        new_node->right = NULL;
 
-        return node;
+        free_subtree(token_pool, node_pool, node);
+        return new_node;
         }
     return node;
 }
@@ -921,44 +964,53 @@ ast_node_t* solve(token_pool_t* token_pool, node_pool_t* node_pool, ast_node_t* 
 ast_node_t* simplify(expression_t* expr, ast_node_t* node) {
     if (!node) return NULL;
 
-    node->left = simplify(expr, node->left);    // recurse to bottom left of tree
-    node->right = simplify(expr, node->right);  // then bottom right
+    // First simplify children
+    node->left = simplify(expr, node->left);
+    node->right = simplify(expr, node->right);
 
-    if (node->token->type != TOKEN_OPERATOR) {
-        node = solve(expr->token_pool, expr->node_pool, node);
-        return node;
+    // Try simplifying the current node directly
+    if (node->token->type == TOKEN_OPERATOR) {
+        switch (node->token->operator->type) {
+            case ADD:
+                node = zero_property(expr, node);
+                node = identity_property(expr, node);
+                node = commutative_property(expr->token_pool, expr->node_pool, node);
+                break;
+
+            case SUB:
+                node = properties_of_subtraction(expr->token_pool, expr->node_pool, node);
+                break;
+
+            case MUL:
+                node = zero_property(expr, node);
+                node = identity_property(expr, node);
+                node = distributive_property(expr->token_pool, expr->node_pool, node);
+                node = commutative_property(expr->token_pool, expr->node_pool, node);
+                // node = product_of_powers(expr->token_pool, expr->node_pool, node);
+                break;
+
+            case DIV:
+                node = properties_of_division(expr->token_pool, expr->node_pool, node);
+                node = quotient_of_powers(expr->token_pool, expr->node_pool, node);
+                break;
+
+            case POW:
+                node = power_of_powers(expr->token_pool, expr->node_pool, node);
+                break;
+
+            default:
+                break;
+        }
+
+        // After all property rewrites, try folding numeric constants again
+        if (node &&
+            node->token->type == TOKEN_OPERATOR &&
+            node->left &&
+            node->right &&
+            node->left->token->type == TOKEN_NUMBER &&
+            node->right->token->type == TOKEN_NUMBER) {
+            node = solve(expr->token_pool, expr->node_pool, node);
+        }
     }
-
-    switch (node->token->operator->type) {
-        case ADD:
-            node = zero_property(expr, node); // try zero property
-            node = identity_property(expr, node); // try zero property
-            node = commutative_property(expr->token_pool, expr->node_pool, node);
-            return node;
-
-        case SUB:
-            node = properties_of_subtraction(expr->token_pool, expr->node_pool, node);
-            return node;
-
-        case MUL:
-            node = zero_property(expr, node); // try zero property
-            node = identity_property(expr, node); // try zero property
-            node = distributive_property(expr->token_pool, expr->node_pool, node);
-            node = commutative_property(expr->token_pool, expr->node_pool, node);
-            //node = product_of_powers(expr->token_pool, expr->node_pool, node);
-            return node;
-
-        case DIV:
-            node = properties_of_division(expr->token_pool, expr->node_pool, node);
-            node = quotient_of_powers(expr->token_pool, expr->node_pool, node);
-            return node;
-
-        case POW:
-            node = power_of_powers(expr->token_pool, expr->node_pool, node);
-            return node;
-
-        default: return node;
-    }
-    //ast_node_t* simplified = NULL;
-    //return node;
+    return node;
 }
