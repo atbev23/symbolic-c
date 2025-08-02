@@ -13,7 +13,7 @@
 #include "../node_t/node_pool_t/node_pool_t.h"
 #include "../stack_t/stack_t.h"
 
-#define DEBUG_COMMUTATIVE_PROPERTY
+//#define DEBUG_COMMUTATIVE_PROPERTY
 //#define DEBUG_DISTRIBUTIVE_PROPERTY
 
 void expression_init(expression_t* expr_obj, const char* expr_str) {
@@ -73,11 +73,13 @@ int tokenize(expression_t* expr, symbol_table_t* table) {
                 }
                 p++;
             }
+            buf[j] = '\0';
             if (find_symbol(table, buf)) {
                 expr->tokens[token_count++] = sym_token_init(expr->token_pool, table, buf);
                 last_token_type = TOKEN_SYMBOL;
                 continue;
             }
+            memset(buf, 0, MAX_LEXEME_LEN);
         }
 
             // Handle operator
@@ -474,11 +476,11 @@ void print_ast_stack(const stack_t* stack) {
     printf("\n");
 }
 
-ast_node_t* commutative_property(token_pool_t* token_pool, node_pool_t* node_pool, ast_node_t* node) {
+ast_node_t* commutative_property_add(token_pool_t* token_pool, node_pool_t* node_pool, ast_node_t* node) {
     if (!node || node->token->type != TOKEN_OPERATOR) return node;
 
     const operator_type_t op_type = node->token->operator->type;
-    if (op_type != ADD && op_type != MUL) return node;
+    if (op_type != ADD) return node;
 
     stack_t terms;
     stack_init(&terms);
@@ -488,15 +490,23 @@ ast_node_t* commutative_property(token_pool_t* token_pool, node_pool_t* node_poo
     if (terms.top < 0) {
         return node;
     }
+
 #ifdef DEBUG_COMMUTATIVE_PROPERTY
+    printf("Before sorting:/n");
     print_ast_stack(&terms);
 #endif
+
     // sort the nodes by comparing each node's token's type (number->symbol->operator)
     // using a c standard sorting algorithm. i think it, quick sort, is pretty nifty in both the
     // algorithm's simplicity, and the fact that the c standard library provides few other
-    // niceties to get excited about
+    // niceties to get excited about (that I have come across anyway)
     qsort(terms.items, terms.top + 1, sizeof(ast_node_t*), compare_types); // c stdio.h function
     // TODO: when i implement functions, unary operators, etc. check to make sure this still works
+
+#ifdef DEBUG_COMMUTATIVE_PROPERTY
+    printf("After sorting:/n");
+    print_ast_stack(&terms);
+#endif
 
     double vals[terms.top + 1];
     int i = 0;
@@ -509,19 +519,9 @@ ast_node_t* commutative_property(token_pool_t* token_pool, node_pool_t* node_poo
     // if two or more numbers are collected
     if (i >= 2) { // if we collect only one number, there is nothing to do
         // if the operator is MUL, we need to set new_val to 1 (avoid mul by 0) or if ADD, set it to 0
-        double new_val = op_type == MUL ? 1 : 0;
-        switch (op_type) {
-            case ADD:
-                for (int j = 0; j < i; j++) {
-                    new_val += vals[j];
-                }
-                break;
-            case MUL:
-                for (int j = 0; j < i; j++) {
-                    new_val *= vals[j];
-                }
-                break;
-            default: break;
+        double new_val = 0;
+        for (int j = 0; j < i; j++) {
+            new_val += vals[j];
         }
 
         ast_node_t* new_node = node_pool_alloc(node_pool);
@@ -539,6 +539,7 @@ ast_node_t* commutative_property(token_pool_t* token_pool, node_pool_t* node_poo
     //ast_node_t* new_root = rebuild_commutative_subtree(token_pool, node_pool, &terms, node->token->operator->operator);
     return rebuild_commutative_subtree(token_pool, node_pool, &terms, node->token->operator->operator);
 }
+
 
 bool branch_is_equal(ast_node_t* a, ast_node_t* b) {
     if (!a || !b) return false;
@@ -653,196 +654,223 @@ ast_node_t* properties_of_division(token_pool_t* token_pool, node_pool_t* node_p
  *
 */
 
-#define MAX_BASE_GROUPS 8
+#define MAX_BASE_GROUPS 32
 
-// data type to store information related to a singular power node
+// Base group to hold a unique base with accumulated exponents
 typedef struct {
-    ast_node_t* base;
-    stack_t exponents;
+    ast_node_t* base;           // The base subtree (e.g. 'x', '2', '(a+b)')
+    double exponent_sum;        // Sum of numeric exponents
+    stack_t symbolic_exponents; // stack of symbolic exponent nodes (non-numeric)
 } base_group_t;
 
-// data type to store a group of base_group_t
+// list of base groups in mul chain
 typedef struct {
-    base_group_t groups[MAX_BASE_GROUPS];
-    int group_count;
-} base_groups_t;
+    base_group_t groups[MAX_BASE_GROUPS];   // list of base groups
+    int count;                              // number of base groups in chain
+    double numeric_product;                 // product of all pure numeric bases^exponents in chain
+} base_group_list_t;
 
-void collect_assoc_base_groups(token_pool_t* token_pool, node_pool_t* node_pool, base_groups_t* groups, ast_node_t* node) {
-    // return immediately if the node is null
-    if (!node)
-        return;
+// flatten multiplicative tree into an array, updating count
+static void flatten_mul_chain(ast_node_t* node, ast_node_t* flat[], int* count) {
+    if (!node) return;
 
-    // call the function recursively until the node is no longer a part of an associative chain
     if (node->token->type == TOKEN_OPERATOR && node->token->operator->type == MUL) {
-        collect_assoc_base_groups(token_pool, node_pool, groups, node->left);
-        collect_assoc_base_groups(token_pool, node_pool, groups, node->right);
-        return;
+        flatten_mul_chain(node->left, flat, count);
+        flatten_mul_chain(node->right, flat, count);
+    } else {
+        flat[(*count)++] = node;
     }
+}
 
-    // if the node is a power operator
+// Normalize node into base^exp form.
+// If node is POW, base=node->left, exp=node->right
+// else base=node, exp=1 (allocated new number node)
+static void normalize_node(ast_node_t* node, ast_node_t** base_out, ast_node_t** exp_out,
+                           token_pool_t* token_pool, node_pool_t* node_pool) {
     if (node->token->type == TOKEN_OPERATOR && node->token->operator->type == POW) {
-        ast_node_t* base = node->left;
-        ast_node_t* exp = node->right;
+        *base_out = node->left;
+        *exp_out = node->right;
+    } else {
+        *base_out = node;
 
-        // look for a matching base group
-        for (int i = 0; i < groups->group_count; i++) {
-            // if found, add the right child to its stack of exponents and return
-            if (base->token->type == TOKEN_SYMBOL &&
-                base->token->symbol->symbol == groups->groups[i].base->token->symbol->symbol) {
-                stack_push(&groups->groups[i].exponents, exp);
-                return;
-            }
-        }
+        // Allocate exponent node = 1
+        ast_node_t* exp_node = node_pool_alloc(node_pool);
+        exp_node->token = num_token_init_double(token_pool, 1);
+        exp_node->left = NULL;
+        exp_node->right = NULL;
 
-        if (groups->group_count >= MAX_BASE_GROUPS) return; // safeguard
+        *exp_out = exp_node;
+    }
+}
 
-        // if a matching base is not found, create a new base group with the nodes base and exponent and return
-        const int i = groups->group_count++;
-        groups->groups[i].base = base;
-        stack_init(&groups->groups[i].exponents);
-        stack_push(&groups->groups[i].exponents, exp);
+// Insert base^exp into groups, folding numeric exponents and accumulating symbolic exponents
+static void base_group_match(base_group_list_t* groups, ast_node_t* base, ast_node_t* exp) {
+
+    // fold pure numeric bases and exponents immediately
+    if (base->token->type == TOKEN_NUMBER && exp->token->type == TOKEN_NUMBER) {
+        const double pow_val = pow(base->token->number.value, exp->token->number.value);
+        groups->numeric_product *= pow_val;
         return;
     }
 
-    // if the node is not a power operator but a part of the associative chain, store it as a power of 1
-    ast_node_t* base = node;
-    ast_node_t* exp = node_pool_alloc(node_pool);
-    exp->token = num_token_init_double(token_pool, 1);
-    exp->left = NULL;
-    exp->right = NULL;
-
-    // look for a matching base group
-    for (int i = 0; i < groups->group_count; ++i) {
-        // if found, add the right child to its stack of exponents and return
-        if (groups->groups[i].base == base) {
-            stack_push(&groups->groups[i].exponents, exp);
+    // Search existing groups for base equality
+    for (int i = 0; i < groups->count; i++) {
+        // if a matching base is found
+        if (branch_is_equal(groups->groups[i].base, base)) {
+            // if exp is a number
+            if (exp->token->type == TOKEN_NUMBER) {
+                // add it to the exponent sum
+                groups->groups[i].exponent_sum += exp->token->number.value;
+            }
+            // otherwise
+            else {
+                // push symbolic exponent on stack
+                stack_push(&groups->groups[i].symbolic_exponents, exp);
+            }
             return;
         }
     }
 
-    if (groups->group_count >= MAX_BASE_GROUPS) return;
+    // no matching base group found; create a new base group
+    // protect from base_group overflow
+    if (groups->count >= MAX_BASE_GROUPS) {
+        return; // should probably return error
+    }
 
-    // if a matching base is not found, create a new base group with the nodes base and exponent and return
-    const int i = groups->group_count++;
-    groups->groups[i].base = base;
-    stack_init(&groups->groups[i].exponents);
-    stack_push(&groups->groups[i].exponents, exp);
+    base_group_t* group = &groups->groups[groups->count++]; // create a new base group
+    group->base = base;                                     // set the group's base to the input base
+    group->exponent_sum = 0;                                // set the group's exponent sum to zero
+    stack_init(&group->symbolic_exponents);                 // init the group's stack of symbolic exponents
+
+    if (exp->token->type == TOKEN_NUMBER) {
+        group->exponent_sum = exp->token->number.value;
+    } else {
+        stack_push(&group->symbolic_exponents, exp);
+    }
 }
 
+// Build AST for addition chain of symbolic exponents and numeric sum
+static ast_node_t* build_exponent_chain(base_group_t* group, token_pool_t* token_pool, node_pool_t* node_pool) {
+    ast_node_t* exp_chain = NULL;
 
-ast_node_t* product_of_powers(token_pool_t* token_pool, node_pool_t* node_pool, ast_node_t* node) {
-    // return immediately if node is not a part of an associative chain
-    if (!node || node->token->type != TOKEN_OPERATOR || node->token->operator->type != MUL) {
-        return node;
+    // Add numeric exponent if nonzero
+    if (group->exponent_sum != 0.0) {
+        exp_chain = node_pool_alloc(node_pool);
+        exp_chain->token = num_token_init_double(token_pool, group->exponent_sum);
+        exp_chain->left = NULL;
+        exp_chain->right = NULL;
     }
-    // TODO: i think we will infrequently need more than one base group so this function should decide whether to define
-    //      one or multiple base groups
-    base_groups_t groups = {0};
-    // gather stacks of all bases and stacks of associated exponents
-    // TODO: this function does not work on an ambiguous input, such as 3^2m tokenized to (3^2)*m instead of 3^(2*m).
-    //       i need to find a way to make inputs more rigid or tokenized to such. And, if the former, it can be
-    //       handled in an embedded wrapper
-    collect_assoc_base_groups(token_pool, node_pool, &groups, node);
 
+    // Fold symbolic exponents as additions: e1 + e2 + ...
+    while (!stack_is_empty(&group->symbolic_exponents)) {
+        const ast_node_t* sym_exp = stack_pop(&group->symbolic_exponents);
+        ast_node_t* sym_copy = copy_subtree(token_pool, node_pool, sym_exp);
+
+        if (!exp_chain) {
+            exp_chain = sym_copy;
+        } else {
+            ast_node_t* add_node = node_pool_alloc(node_pool);
+            add_node->token = op_token_init(token_pool, '+');
+            add_node->left = exp_chain;
+            add_node->right = sym_copy;
+            exp_chain = add_node;
+        }
+    }
+
+    return exp_chain;
+}
+
+// Reconstruct the simplified product AST from groups
+static ast_node_t* reconstruct_product(base_group_list_t* groups,
+                                      token_pool_t* token_pool, node_pool_t* node_pool) {
     ast_node_t* result = NULL;
-    // loop through all fo the collected base groups
-    for (int i = 0; i < groups.group_count; i++) {
-        stack_t* exponents = &groups.groups[i].exponents;
-        const int num_exp = exponents->top + 1;
 
-        // sort the base group's exponents, numbers first
-        qsort(&exponents->items, num_exp, sizeof(void*), compare_types);
+    // Add folded numeric product if not 1
+    if (groups->numeric_product != 1.0) {
+        ast_node_t* num_node = node_pool_alloc(node_pool);
+        num_node->token = num_token_init_double(token_pool, groups->numeric_product);
+        num_node->left = NULL;
+        num_node->right = NULL;
+        result = num_node;
+    }
 
-        // Collect the numbers
-        double vals[num_exp];
-        int j = 0;
-        while (j <= exponents->top && ((ast_node_t*)exponents->items[j])->token->type == TOKEN_NUMBER) {
-            vals[j] = ((ast_node_t*)exponents->items[j])->token->number.value;
-            j++;
+    for (int i = 0; i < groups->count; i++) {
+        base_group_t* group = &groups->groups[i];
+        ast_node_t* base_copy = copy_subtree(token_pool, node_pool, group->base);
+        ast_node_t* exp_chain = build_exponent_chain(group, token_pool, node_pool);
+
+        // If exponent is NULL (meaning sum=0 and no symbolic exponents), exponent = 1
+        if (!exp_chain) {
+            exp_chain = node_pool_alloc(node_pool);
+            exp_chain->token = num_token_init_double(token_pool, 1);
+            exp_chain->left = NULL;
+            exp_chain->right = NULL;
         }
 
-        // If two or more numbers, fold them
-        if (j >= 2) {
-            double sum = 0;
-            for (int k = 0; k < j; k++) {
-                sum += vals[k];
-            }
+        // If exponent == 1, skip pow node, just use base
+        const bool is_exp_one = (exp_chain->token->type == TOKEN_NUMBER && exp_chain->token->number.value == 1.0);
 
-            // create a number node with the sum
-            ast_node_t* sum_node = node_pool_alloc(node_pool);
-            sum_node->token = num_token_init_double(token_pool, sum);
-            sum_node->left = NULL;
-            sum_node->right = NULL;
-            // Replace first number exponent with the sum
-            //((ast_node_t*)exponents->items[0])->token->number.value = sum;
-
-            for (int l = j; l > 0; l--) {
-                const ast_node_t* free_node = stack_pop_bottom(exponents);
-                token_pool_free_token(token_pool, free_node->token);
-                node_pool_free_node(node_pool, free_node);
-            }
-
-            stack_push(exponents, sum_node);
+        ast_node_t* term = NULL;
+        if (is_exp_one) {
+            term = base_copy;
+            // free exp_chain node since unused? (depends on your mem management)
+        } else {
+            term = node_pool_alloc(node_pool);
+            term->token = op_token_init(token_pool, '^');
+            term->left = base_copy;
+            term->right = exp_chain;
         }
 
-        // Now build the exponent chain from what's left in exponents
-        if (exponents->top < 0) {
-            // No exponents, so power is base ^ 1 (just base)
-            ast_node_t* base_copy = copy_subtree(token_pool, node_pool, groups.groups[i].base);
-
-            if (!result) {
-                result = base_copy;
-            } else {
-                ast_node_t* mul_node = node_pool_alloc(node_pool);
-                mul_node->token = op_token_init(token_pool, '*');
-                mul_node->left = result;
-                mul_node->right = base_copy;
-                result = mul_node;
-            }
-
-            continue;
-        }
-
-        // Pop the first exponent and copy it
-        ast_node_t* exp_chain = copy_subtree(token_pool, node_pool, stack_pop(exponents));
-
-        // Pop remaining exponents and build right-associative exponent chain: e1 ^ (e2 ^ (e3 ...))
-        // TODO: this function creates nodes for exponent values or one (a^1) whereas it should skip creating nodes
-        //       for OPERATOR_TOKEN->POW and '1'
-        while (!stack_is_empty(exponents)) {
-            ast_node_t* next_exp = copy_subtree(token_pool, node_pool, stack_pop(exponents));
-
-            ast_node_t* pow_node = node_pool_alloc(node_pool);
-            pow_node->token = op_token_init(token_pool, '+');
-            pow_node->left = exp_chain;
-            pow_node->right = next_exp;
-
-            exp_chain = pow_node;
-        }
-
-        // Now build base ^ exponent_chain, copying base to avoid aliasing
-        ast_node_t* base_copy = copy_subtree(token_pool, node_pool, groups.groups[i].base);
-
-        ast_node_t* base_pow = node_pool_alloc(node_pool);
-        base_pow->token = op_token_init(token_pool, '^');
-        base_pow->left = base_copy;
-        base_pow->right = exp_chain;
-
-        // Multiply into result
         if (!result) {
-            result = base_pow;
+            result = term;
         } else {
             ast_node_t* mul_node = node_pool_alloc(node_pool);
             mul_node->token = op_token_init(token_pool, '*');
             mul_node->left = result;
-            mul_node->right = base_pow;
+            mul_node->right = term;
             result = mul_node;
         }
+    }
+
+    // If no groups and numeric product is 1, result is 1
+    if (!result) {
+        ast_node_t* one_node = node_pool_alloc(node_pool);
+        one_node->token = num_token_init_double(token_pool, 1);
+        one_node->left = NULL;
+        one_node->right = NULL;
+        result = one_node;
     }
 
     return result;
 }
 
+// The full function integrating everything
+ast_node_t* product_of_powers(token_pool_t* token_pool, node_pool_t* node_pool, ast_node_t* node) {
+    if (!node || node->token->type != TOKEN_OPERATOR || node->token->operator->type != MUL)
+        return node;
+
+    ast_node_t* flat[MAX_BASE_GROUPS];
+    int count = 0;
+
+    // collect the associative mul chain in an array
+    flatten_mul_chain(node, flat, &count);
+
+    base_group_list_t groups = { .count = 0, .numeric_product = 1.0 };
+
+    // loop through the array
+    for (int i = 0; i < count; i++) {
+        // create base and exp nodes
+        ast_node_t* base = NULL;
+        ast_node_t* exp = NULL;
+        // populate the base and exp nodes
+        normalize_node(flat[i], &base, &exp, token_pool, node_pool);
+        // insert exp into the matching base group, creating a new one with base if necessary
+        base_group_match(&groups, base, exp);
+    }
+    ast_node_t* subroot = reconstruct_product(&groups, token_pool, node_pool);
+    free_subtree(token_pool, node_pool, node);
+    return subroot;
+}
 
 ast_node_t* quotient_of_powers(token_pool_t* token_pool, node_pool_t* node_pool, ast_node_t* node) {
     if (!node || node->token->type != TOKEN_OPERATOR || node->token->operator->type != DIV) {
@@ -974,7 +1002,7 @@ ast_node_t* simplify(expression_t* expr, ast_node_t* node) {
             case ADD:
                 node = zero_property(expr, node);
                 node = identity_property(expr, node);
-                node = commutative_property(expr->token_pool, expr->node_pool, node);
+                node = commutative_property_add(expr->token_pool, expr->node_pool, node);
                 break;
 
             case SUB:
@@ -985,8 +1013,8 @@ ast_node_t* simplify(expression_t* expr, ast_node_t* node) {
                 node = zero_property(expr, node);
                 node = identity_property(expr, node);
                 node = distributive_property(expr->token_pool, expr->node_pool, node);
-                node = commutative_property(expr->token_pool, expr->node_pool, node);
-                // node = product_of_powers(expr->token_pool, expr->node_pool, node);
+                //node = commutative_property_mul(expr->token_pool, expr->node_pool, node);
+                node = product_of_powers(expr->token_pool, expr->node_pool, node);
                 break;
 
             case DIV:
