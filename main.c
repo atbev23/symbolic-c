@@ -9,55 +9,47 @@
 #include "src/expression_t/expression_t.h"
 #include "src/token_t/token_pool_t/token_pool_t.h"
 
+int cli_read_expression(char* buffer, const int buf_size) {
+    printf("y = ");
+    if (fgets(buffer, buf_size, stdin) == NULL) { // Narrowing conversion from 'size_t' (aka 'unsigned long long') to signed type 'int' is implementation-defined
+        return 0; // input error
+    }
+    const size_t len = strlen(buffer);
+    if (len > 0 && buffer[len-1] == '\n') {
+        buffer[len-1] = '\0';
+    }
+    return 1;
+}
+
 int main(void) {
-    static token_pool_t token_pool;
-    token_pool_init(&token_pool);
-
-    static node_pool_t node_pool;
-    node_pool_init(&node_pool);
-
     // initialize a symbol table
     symbol_table_t table = {0};
     symbol_table_init(&table);
 
     // fill it with symbols you plan to use
-    sym_init(&table, "a");
-    sym_init(&table, "m");
-    sym_init(&table, "n");
+    sym_init(&table, "x");
+    sym_init(&table, "y");
+    sym_init(&table, "z");
 
-    // initialize an expression and link it to token and node pools
-    expression_t expr = {0};
-    expr.token_pool = &token_pool;
-    expr.node_pool = &node_pool;
+    char input_buffer[MAX_EXPR_LEN] = {0};
+    char output_buffer[MAX_EXPR_LEN] = {0};
 
-    // ask the user for an expression, entered as a string
-    printf("Enter an expression: ");
-    fgets(expr.expression, sizeof(expr.expression), stdin);
+    while (cli_read_expression(input_buffer, MAX_EXPR_LEN)) {
+        expression_t expr = {0};
+        expression_init(&expr, input_buffer, &table);
+        //printf("y = %s\n", expr.expression);
 
-   // strncpy(expr.expression, "3*a", MAX_EXPR_LEN);
+        int offset = 0;
+        ast_to_string(expr.root, output_buffer, MAX_EXPR_LEN, &offset);
+        output_buffer[offset < MAX_EXPR_LEN ? offset : MAX_EXPR_LEN - 1] = '\0';
+        printf("y = %s\n", output_buffer);
 
-    struct timespec start, end;
+        //print_tree(expr.root);
+        //printf("\n");
+        // token_pool_status(expr.token_pool);
+        // node_pool_status(expr.node_pool);
+    }
 
-    clock_gettime(CLOCK_MONOTONIC, &start);
-    expr.token_count = tokenize(&expr, &table); // tokenize the expression
-    expr.node_count = build_ast(&expr);         // build an abstract syntax tree
-    expr.root = simplify(&expr, expr.root);     // simplify the tree
-    //expr.root = simplify(&expr, expr.root);     // simplify the tree
-    clock_gettime(CLOCK_MONOTONIC, &end);
-
-    const double seconds = (double)(end.tv_sec - start.tv_sec);
-    const double nanoseconds = end.tv_nsec - start.tv_nsec;
-    const double elapsed = seconds + nanoseconds * 1e-9;
-
-    printf("\nExpression simplified in %f seconds.\n\n", elapsed);
-    //printf("\nExpression simplified in %g seconds.\n\n", (double)(end - start) / CLOCKS_PER_SEC);
-    // printf("\n");
-
-    printf("y = %s\n\n", expr.expression);
-    print_tree(expr.root);
-    printf("\n");
-    token_pool_status(expr.token_pool);
-    node_pool_status(expr.node_pool);
 
     // printf("\n");
     // printf("Size of expression_t: %zu bytes \n", sizeof(expression_t));

@@ -120,3 +120,37 @@ void print_tree(const ast_node_t* root) {
         printf("\n");
     }
 }
+
+
+void append_token_string(const char* str, char* buffer, int buf_size, int* offset) {
+    while (*str && *offset < buf_size - 1) {
+        buffer[(*offset)++] = *str++;
+    }
+}
+
+void ast_to_string(ast_node_t* node, char* buffer, const int buf_size, int* offset) {
+    if (!node || !node->token || *offset >= buf_size - 1) return;
+
+    switch (node->token->type) {
+        case TOKEN_NUMBER:
+            append_token_string(node->token->number.disp, buffer, buf_size, offset);
+            break;
+        case TOKEN_SYMBOL:
+            append_token_string(node->token->symbol->symbol, buffer, buf_size, offset);
+            break;
+
+        case TOKEN_OPERATOR:
+            append_token_string("(", buffer, buf_size, offset);
+            ast_to_string(node->left, buffer, buf_size, offset);
+            append_token_string(" ", buffer, buf_size, offset);
+            append_token_string(node->token->operator->operator, buffer, buf_size, offset);
+            append_token_string(" ", buffer, buf_size, offset);
+            ast_to_string(node->right, buffer, buf_size, offset);
+            append_token_string(")", buffer, buf_size, offset);
+            break;
+
+        default:
+            append_token_string("?", buffer, buf_size, offset);
+            break;
+    }
+}

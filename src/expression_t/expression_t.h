@@ -23,7 +23,7 @@ struct expression_t {
     bool is_symbolic;
 };
 
-void expression_init(expression_t*, const char*);   // takes in an expression as a string, creates expression_t object
+int expression_init(expression_t*, const char*, symbol_table_t*);   // takes in an expression as a string, creates expression_t object
 int tokenize(expression_t*, symbol_table_t*);       // turns expression string to list of tokens
 int build_ast(expression_t*);                       // creates an abstract syntax tree using our tokens
 ast_node_t* simplify(expression_t*, ast_node_t*);    // performs "math rules" to simplify the ast

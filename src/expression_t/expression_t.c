@@ -8,18 +8,58 @@
 
 #include <ctype.h>
 #include <math.h>
+#include <pthread_time.h>
 #include <stdio.h>
 #include "../token_t/token_pool_t/token_pool_t.h"
 #include "../node_t/node_pool_t/node_pool_t.h"
 #include "../stack_t/stack_t.h"
 
+//#define DEBUG_EXPRESSION_INIT
 //#define DEBUG_COMMUTATIVE_PROPERTY
 //#define DEBUG_DISTRIBUTIVE_PROPERTY
 
-void expression_init(expression_t* expr_obj, const char* expr_str) {
-    memset(expr_obj, 0, sizeof(expression_t));               // make sure expressiion
-    strncpy(expr_obj->expression, expr_str, MAX_EXPR_LEN);  // set the expression
-    //expr_obj->expression[MAX_EXPR_LEN - 1] = '\0';                   // null terminate the expression
+int expression_init(expression_t* expr, const char* input_expr, symbol_table_t* table) {
+    static token_pool_t token_pool;
+    token_pool_init(&token_pool);
+
+    static node_pool_t node_pool;
+    node_pool_init(&node_pool);
+
+    expr->token_pool = &token_pool;
+    expr->node_pool = &node_pool;
+
+    strncpy(expr->expression, input_expr, sizeof(expr->expression));
+    expr->expression[sizeof(expr->expression)-1] = '\0';
+
+#ifdef DEBUG_EXPRESSION_INIT
+    struct timespec start, end;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+#endif
+
+    expr->token_count = tokenize(expr, table);
+    if (expr->token_count == 0) {
+        return 0;
+    }
+
+    expr->node_count = build_ast(expr);
+    if (!expr->root) {
+        return 0; // ast build error
+    }
+
+    expr->root = simplify(expr, expr->root);
+    if (!expr->root) {
+        return 0; // Simplify error
+    }
+
+#ifdef DEBUG_EXPRESSION_INIT
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    const double seconds = (double)(end.tv_sec - start.tv_sec);
+    const double nanoseconds = end.tv_nsec - start.tv_nsec;
+    const double elapsed = seconds + nanoseconds * 1e-9;
+    printf("\nExpression simplified in %f seconds.\n\n", elapsed);
+#endif
+
+    return 1;
 }
 
 // straightforward string to tokens function
@@ -197,7 +237,7 @@ int build_ast(expression_t* expr) {
     ast_node_t* root = stack_pop(&n); // I think root would be tree->nodes[0] but not sure so for safety we are here
     expr->root = root;
 
-    return 0;
+    //return 0;
 }
 
 void free_subtree(token_pool_t* token_pool, node_pool_t* node_pool, ast_node_t* node) {
@@ -670,6 +710,41 @@ typedef struct {
     double numeric_product;                 // product of all pure numeric bases^exponents in chain
 } base_group_list_t;
 
+// if the node is a^ (x + y) and a is numeric, rewrite as (a^x) * (a^y)
+ast_node_t* expand_exponent_addition(ast_node_t* node, token_pool_t* token_pool, node_pool_t* node_pool) {
+    if (!node || node->token->type != TOKEN_OPERATOR || node->token->operator->type != POW)
+        return node;
+
+    const ast_node_t* base = node->left;
+    const ast_node_t* exp = node->right;
+
+    // only transform if base is numeric and exponent is a sum
+    if (base->token->type != TOKEN_NUMBER)
+        return node;
+
+    if (exp->token->type != TOKEN_OPERATOR || exp->token->operator->type != ADD)
+        return node;
+
+    // rewrite: a^(x + y) → a^x * a^y
+    ast_node_t* left_pow = node_pool_alloc(node_pool);
+    left_pow->token = op_token_init(token_pool, '^');
+    left_pow->left = copy_subtree(token_pool, node_pool, base);
+    left_pow->right = copy_subtree(token_pool, node_pool, exp->left);
+
+    ast_node_t* right_pow = node_pool_alloc(node_pool);
+    right_pow->token = op_token_init(token_pool, '^');
+    right_pow->left = copy_subtree(token_pool, node_pool, base);
+    right_pow->right = copy_subtree(token_pool, node_pool, exp->right);
+
+    ast_node_t* mul = node_pool_alloc(node_pool);
+    mul->token = op_token_init(token_pool, '*');
+    mul->left = left_pow;
+    mul->right = right_pow;
+
+    free_subtree(token_pool, node_pool, node); // optionally free the original
+    return mul;
+}
+
 // flatten multiplicative tree into an array, updating count
 static void flatten_mul_chain(ast_node_t* node, ast_node_t* flat[], int* count) {
     if (!node) return;
@@ -848,6 +923,8 @@ static ast_node_t* reconstruct_product(base_group_list_t* groups,
 ast_node_t* product_of_powers(token_pool_t* token_pool, node_pool_t* node_pool, ast_node_t* node) {
     if (!node || node->token->type != TOKEN_OPERATOR || node->token->operator->type != MUL)
         return node;
+
+    node = expand_exponent_addition(node, token_pool, node_pool);
 
     ast_node_t* flat[MAX_BASE_GROUPS];
     int count = 0;
