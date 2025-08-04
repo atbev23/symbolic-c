@@ -42,7 +42,7 @@ int main(void) {
         int offset = 0;
         ast_to_string(expr.root, output_buffer, MAX_EXPR_LEN, &offset);
         output_buffer[offset < MAX_EXPR_LEN ? offset : MAX_EXPR_LEN - 1] = '\0';
-        printf("y = %s\n", output_buffer);
+        printf("y = %s\n\n", output_buffer);
 
         //print_tree(expr.root);
         //printf("\n");

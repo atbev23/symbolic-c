@@ -46,7 +46,14 @@ int expression_init(expression_t* expr, const char* input_expr, symbol_table_t* 
         return 0; // ast build error
     }
 
-    expr->root = simplify(expr, expr->root);
+    const ast_node_t* old_root = NULL;
+    ast_node_t* current_root = expr->root;
+
+    while (current_root != old_root) {
+        old_root = current_root;
+        current_root = simplify(expr, current_root);
+    }
+    expr->root = current_root;
     if (!expr->root) {
         return 0; // Simplify error
     }
