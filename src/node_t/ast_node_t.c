@@ -34,6 +34,24 @@ inline ast_node_t* copy_subtree(token_pool_t* token_pool, node_pool_t* node_pool
     return node_copy;
 }
 
+bool branch_is_equal(ast_node_t* a, ast_node_t* b) {
+    if (!a || !b) return false;
+    if (a->token->type != b->token->type) return false;
+
+    switch (a->token->type) {
+        case TOKEN_NUMBER:
+            return a->token->number.value == b->token->number.value;
+        case TOKEN_SYMBOL:
+            return strcmp(a->token->symbol->symbol, b->token->symbol->symbol) == 0;
+        case TOKEN_OPERATOR:
+            return a->token->operator->type == b->token->operator->type &&
+                   branch_is_equal(a->left, b->left) &&
+                   branch_is_equal(a->right, b->right);
+        default:
+            return false;
+    }
+}
+
 int get_tree_depth(const ast_node_t* root) {
     if (root == NULL)
         return 0;

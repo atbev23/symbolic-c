@@ -9,6 +9,17 @@
 #include "src/expression_t/expression_t.h"
 #include "src/token_t/token_pool_t/token_pool_t.h"
 
+#define MAX_COMMAND_LEN 1
+
+// i dont want to do this, but someting similar. i will have multiple "pages" and each will have their own bindings
+#define COMMAND_END_PROGRAM     "~"
+#define COMMAND_OPTIONS         "o"
+#define COMMAND_EXPR_CREATE     "e"
+#define COMMAND_EXPR_DERIVE     "d"
+
+// and whiel we are talking about ui, i want to do a cli options where you can change the color scheme and tab color
+// a nice color is #6B1F1F for a tab
+
 int cli_read_expression(char* buffer, const int buf_size) {
     printf("y = ");
     if (fgets(buffer, buf_size, stdin) == NULL) { // Narrowing conversion from 'size_t' (aka 'unsigned long long') to signed type 'int' is implementation-defined
@@ -31,6 +42,7 @@ int main(void) {
     sym_init(&table, "y");
     sym_init(&table, "z");
 
+    char command_buffer[MAX_COMMAND_LEN] = {0}; // buffer to store commands.
     char input_buffer[MAX_EXPR_LEN] = {0};
     char output_buffer[MAX_EXPR_LEN] = {0};
 
@@ -46,8 +58,8 @@ int main(void) {
 
         //print_tree(expr.root);
         //printf("\n");
-        // token_pool_status(expr.token_pool);
-        // node_pool_status(expr.node_pool);
+        token_pool_status(expr.token_pool);
+        node_pool_status(expr.node_pool);
     }
 
 

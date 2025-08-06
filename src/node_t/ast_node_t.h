@@ -19,6 +19,7 @@ struct ast_node_t {
 
 ast_node_t* create_node(node_pool_t*, token_t*, ast_node_t*, ast_node_t*);
 ast_node_t* copy_subtree(token_pool_t*, node_pool_t*, const ast_node_t*);
+bool branch_is_equal(ast_node_t*, ast_node_t*);
 int get_tree_depth(const ast_node_t*);
 void ast_to_string(ast_node_t* node, char* buffer, int buf_size, int* offset);
 void print_tree(const ast_node_t*);
