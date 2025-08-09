@@ -263,9 +263,9 @@ void free_subtree(token_pool_t* token_pool, node_pool_t* node_pool, ast_node_t* 
 }
 
 ast_node_t* identity_property_add(ast_node_t* node, token_pool_t* token_pool, node_pool_t* node_pool) {
-    if (!(node->token->type == TOKEN_OPERATOR && node->token->operator->type == ADD )) {
-        return node;
-    }
+    // if (!(node->token->type == TOKEN_OPERATOR && node->token->operator->type == ADD )) {
+    //     return node;
+    // }
     if (node->right && node->right->token->type == TOKEN_NUMBER && node->right->token->number.value == 0) {
         ast_node_t* left = copy_subtree(token_pool, node_pool, node->left);
         free_subtree(token_pool, node_pool, node);
@@ -280,9 +280,9 @@ ast_node_t* identity_property_add(ast_node_t* node, token_pool_t* token_pool, no
 }
 
 ast_node_t* identity_property_sub(ast_node_t* node, token_pool_t* token_pool, node_pool_t* node_pool) {
-    if (!(node && node->token->type == TOKEN_OPERATOR && node->token->operator->type == SUB)) {
-        return node;
-    }
+    // if (!(node && node->token->type == TOKEN_OPERATOR && node->token->operator->type == SUB)) {
+    //     return node;
+    // }
     if (!node->left || !node->right) {
         return node;
     }
@@ -319,9 +319,9 @@ ast_node_t* identity_property_mul(ast_node_t* node, token_pool_t* token_pool, no
 }
 
 ast_node_t* identity_property_div(ast_node_t* node, token_pool_t* token_pool, node_pool_t* node_pool) {
-    if (!(node->token->type == TOKEN_OPERATOR && node->token->operator->type == DIV)) {
-        return node;
-    }
+    // if (!(node->token->type == TOKEN_OPERATOR && node->token->operator->type == DIV)) {
+    //     return node;
+    // }
     // x/1 = x
     if (node->right && node->right->token->type == TOKEN_NUMBER && node->right->token->number.value == 1) {
         ast_node_t* left = copy_subtree(token_pool, node_pool, node->left);
