@@ -17,8 +17,8 @@ typedef enum {
 } function_type_t;
 
 typedef struct {
+    const char* function;
     function_type_t type;
-    int precedence;
 } function_t;
 
 #endif //FUNCTION_T_H

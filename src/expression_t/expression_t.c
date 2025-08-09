@@ -14,7 +14,7 @@
 #include "../node_t/node_pool_t/node_pool_t.h"
 #include "../stack_t/stack_t.h"
 
-#define DEBUG_EXPRESSION_INIT
+//#define DEBUG_EXPRESSION_INIT
 //#define DEBUG_COMMUTATIVE_PROPERTY
 //#define DEBUG_DISTRIBUTIVE_PROPERTY
 
@@ -48,15 +48,7 @@ int expression_init(expression_t* expr, const char* input_expr, symbol_table_t* 
     // TODO: this doesn't work when no simplification is needed; the returned root node is always different from the original
 
     expr->root = simplify(expr->root, expr->token_pool, expr->node_pool);
-    expr->root = simplify(expr->root, expr->token_pool, expr->node_pool);
-    // ast_node_t* old_root = NULL;
-    // ast_node_t* current_root = expr->root;
-    //
-    // while (!branch_is_equal(old_root, current_root)) {
-    //     old_root = current_root;
-    //     current_root = simplify(expr, current_root);
-    // }
-    // expr->root = current_root;
+    //expr->root = simplify(expr->root, expr->token_pool, expr->node_pool);
     if (!expr->root) {
         return 0; // Simplify error
     }
@@ -288,22 +280,24 @@ ast_node_t* identity_property_add(ast_node_t* node, token_pool_t* token_pool, no
 }
 
 ast_node_t* identity_property_sub(ast_node_t* node, token_pool_t* token_pool, node_pool_t* node_pool) {
-    if (!(node->token->type == TOKEN_OPERATOR && node->token->operator->type == SUB)) {
+    if (!(node && node->token->type == TOKEN_OPERATOR && node->token->operator->type == SUB)) {
         return node;
     }
-    // x-0 = x
-    if (node->right && node->right->token->type == TOKEN_NUMBER && node->right->token->number.value == 0) {
-        ast_node_t* left = copy_subtree(token_pool, node_pool, node->left);
-        free_subtree(token_pool, node_pool, node);
-        return left;
+    if (!node->left || !node->right) {
+        return node;
     }
-    // 0-x = -x
-    // TODO: cannot handle unary operators yet
-    // if (node->left && node->left->token->type == TOKEN_NUMBER && node->left->token->number.value == 0) {
-    //     ast_node_t* right = copy_subtree(token_pool, node_pool, node->right);
-    //     free_subtree(token_pool, node_pool, node);
-    //     return right;
-    // }
+    // x-x = 0
+    if (branch_is_equal(node->left, node->right)) {
+        ast_node_t* zero_node = node_pool_alloc(node_pool);
+        zero_node->token = num_token_init(token_pool, "0");
+        zero_node->left = NULL;
+        zero_node->right = NULL;
+
+        // free original tree and return 0
+        free_subtree(token_pool, node_pool, node);
+        return zero_node;
+    }
+
     return node;
 }
 
@@ -350,6 +344,26 @@ ast_node_t* identity_property_pow(ast_node_t* node, token_pool_t* token_pool, no
     return node;
 }
 
+ast_node_t* zero_property_sub(ast_node_t* node, token_pool_t* token_pool, node_pool_t* node_pool) {
+    if (!(node->token->type == TOKEN_OPERATOR && node->token->operator->type == SUB)) {
+        return node;
+    }
+    // x-0 = x
+    if (node->right && node->right->token->type == TOKEN_NUMBER && node->right->token->number.value == 0) {
+        ast_node_t* left = copy_subtree(token_pool, node_pool, node->left);
+        free_subtree(token_pool, node_pool, node);
+        return left;
+    }
+    // 0-x = -x
+    // TODO: cannot handle unary operators yet
+    // if (node->left && node->left->token->type == TOKEN_NUMBER && node->left->token->number.value == 0) {
+    //     ast_node_t* right = copy_subtree(token_pool, node_pool, node->right);
+    //     free_subtree(token_pool, node_pool, node);
+    //     return right;
+    // }
+    return node;
+}
+
 ast_node_t* zero_property_mul(token_pool_t* token_pool, node_pool_t* node_pool, ast_node_t* node) {
     if (!(node->token->type == TOKEN_OPERATOR && node->token->operator->type == MUL)) {
         return node;
@@ -361,6 +375,19 @@ ast_node_t* zero_property_mul(token_pool_t* token_pool, node_pool_t* node_pool, 
         return right;                                                                    // return left node
     }
     if (node->left && node->left->token->type == TOKEN_NUMBER && node->left->token->number.value == 0) {      // for both children of add
+        ast_node_t* left = copy_subtree(token_pool, node_pool, node->left);
+        free_subtree(token_pool, node_pool, node);
+        return left;
+    }
+    return node;
+}
+
+ast_node_t* zero_property_div(token_pool_t* token_pool, node_pool_t* node_pool, ast_node_t* node) {
+    if (!(node->token->type == TOKEN_OPERATOR && node->token->operator->type != DIV)) {
+        return node;
+    }
+    // 0/x = 0
+    if (node->left && node->left->token->type == TOKEN_NUMBER && node->left->token->number.value == 0) {
         ast_node_t* left = copy_subtree(token_pool, node_pool, node->left);
         free_subtree(token_pool, node_pool, node);
         return left;
@@ -754,6 +781,7 @@ typedef struct {
     ast_node_t* base;           // The base subtree (e.g. 'x', '2', '(a+b)')
     double exponent_sum;        // Sum of numeric exponents
     stack_t symbolic_exponents; // stack of symbolic exponent nodes (non-numeric)
+    bool exponent_is_one;
 } base_group_t;
 
 // list of base groups in mul chain
@@ -926,19 +954,13 @@ static ast_node_t* reconstruct_product(base_group_list_t* groups, token_pool_t* 
         ast_node_t* base_copy = copy_subtree(token_pool, node_pool, group->base);
         ast_node_t* exp_chain = build_exponent_chain(group, token_pool, node_pool);
 
-        // If exponent is NULL (meaning sum=0 and no symbolic exponents), exponent = 1
-        if (!exp_chain) {
-            exp_chain = node_pool_alloc(node_pool);
-            exp_chain->token = num_token_init_double(token_pool, 1);
-            exp_chain->left = NULL;
-            exp_chain->right = NULL;
-        }
-
-        // If exponent == 1, skip pow node, just use base
-        const bool is_exp_one = (exp_chain->token->type == TOKEN_NUMBER && exp_chain->token->number.value == 1.0);
+        // If exponent is NULL (meaning sum=0 and no symbolic exponents),
+        // or if exponent is 1, skip pow node, set flag
+        const bool exp_one_flag = !exp_chain ||
+                                  (exp_chain->token->type == TOKEN_NUMBER && exp_chain->token->number.value == 1.0);
 
         ast_node_t* term = NULL;
-        if (is_exp_one) {
+        if (exp_one_flag) {
             term = base_copy;
             // free exp_chain node since unused? (depends on your mem management)
         } else {
@@ -1136,16 +1158,19 @@ ast_node_t* simplify(ast_node_t* node, token_pool_t* token_pool, node_pool_t* no
 
             case SUB:
                 node = identity_property_sub(node, token_pool, node_pool);
+                node = zero_property_sub(node, token_pool, node_pool);
                 break;
 
             case MUL:
-                node = zero_property_mul(token_pool, node_pool, node);
                 node = identity_property_mul(node, token_pool, node_pool);
+                node = zero_property_mul(token_pool, node_pool, node);
                 node = distributive_property(token_pool, node_pool, node);
                 node = product_of_powers(token_pool, node_pool, node);
                 break;
 
             case DIV:
+                node = identity_property_div(node, token_pool, node_pool);
+                node = zero_property_div(token_pool, node_pool, node);
                 node = properties_of_division(token_pool, node_pool, node);
                 node = quotient_of_powers(token_pool, node_pool, node);
                 break;

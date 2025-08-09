@@ -30,4 +30,5 @@ add_executable(sym_calc main.c
         src/mem_pool_t/mem_pool_t.txt
         src/token_t/token_pool_t/token_pool_t.h
         src/token_t/token_pool_t/token_pool_t.c
+        src/token_t/function_t/function_t.c
 )
