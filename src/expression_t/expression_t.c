@@ -19,38 +19,37 @@
 //#define DEBUG_DISTRIBUTIVE_PROPERTY
 
 int expression_init(expression_t* expr, const char* input_expr, symbol_table_t* table) {
-    static token_pool_t token_pool;
-    token_pool_init(&token_pool);
+    static token_pool_t token_pool; // declare a token pool
+    token_pool_init(&token_pool);   // initialize the token pool
 
-    static node_pool_t node_pool;
-    node_pool_init(&node_pool);
+    static node_pool_t node_pool;   // declare a node pool
+    node_pool_init(&node_pool);     // initialize the node pool
 
-    expr->token_pool = &token_pool;
-    expr->node_pool = &node_pool;
+    expr->token_pool = &token_pool; // link the declared token pool to the expression
+    expr->node_pool = &node_pool;   // link the declared node pool to the expression
 
-    strncpy(expr->expression, input_expr, sizeof(expr->expression));
-    expr->expression[sizeof(expr->expression)-1] = '\0';
+    strncpy(expr->expression, input_expr, sizeof(expr->expression));   // copy the inputted string to the expression
+    expr->expression[sizeof(expr->expression)-1] = '\0';                    // null terminate the string
 
 #ifdef DEBUG_EXPRESSION_INIT
     struct timespec start, end;
     clock_gettime(CLOCK_MONOTONIC, &start);
 #endif
 
-    expr->token_count = tokenize(expr, table);
-    if (expr->token_count == 0) {
-        return 0;
+    expr->token_count = tokenize(expr, table);  // tokenize the expression
+    if (expr->token_count == 0) {               // if no tokens were created,
+        return 0;                               // return immediately
     }
 
-    expr->node_count = build_ast(expr);
-    if (!expr->root) {
-        return 0; // ast build error
+    expr->node_count = build_ast(expr); // build an abstract syntax tree using the tokenized expression
+    if (!expr->root) {                  // if a tree was not created,
+        return 0;                       // return immediately
     }
-    // TODO: this doesn't work when no simplification is needed; the returned root node is always different from the original
-
-    expr->root = simplify(expr->root, expr->token_pool, expr->node_pool);
-    //expr->root = simplify(expr->root, expr->token_pool, expr->node_pool);
-    if (!expr->root) {
-        return 0; // Simplify error
+    // TODO: need to simplify until no more simplification can be done
+    expr->root = simplify(expr->root, expr->token_pool, expr->node_pool);   // simplify the expression using algebraic properties
+    //expr->root = simplify(expr->root, expr->token_pool, expr->node_pool); // run the simplification algorithm again
+    if (!expr->root) {                                                      // if the expression simplifies to 0 or errored,
+        return 0;                                                           // return immediately
     }
 
 #ifdef DEBUG_EXPRESSION_INIT
@@ -61,30 +60,33 @@ int expression_init(expression_t* expr, const char* input_expr, symbol_table_t* 
     printf("\nExpression simplified in %f seconds.\n\n", elapsed);
 #endif
 
-    return 1;
+    return 1; // function success
 }
 
 // straightforward string to tokens function
 int tokenize(expression_t* expr, symbol_table_t* table) {
-    int token_count = 0;
-    char buf[MAX_LEXEME_LEN] = {0};
-    const char *p = expr->expression;
-    int last_token_type = TOKEN_UNKNOWN;
+    int token_count = 0;                    // create a variable to store the number of tokens created
+    char buf[MAX_LEXEME_LEN] = {0};         // buffer to store numbers or characters as we are looping through a chain
+    const char *p = expr->expression;       // pointer to the current character of the expression (char array)
+    int last_token_type = TOKEN_UNKNOWN;    // variable to track the last token type
 
     // for (int i = 0; expr->expression[i] != '\0'; i++) {
     //     printf("expr.expression[%d] = '%c' (0x%02X)\n", i, expr->expression[i], (unsigned char)expr->expression[i]);
     // }
 
-    while (*p != '\0' && token_count < MAX_EXPR_LEN) {    // parse through inputted expression
-        if (*p == ' ') { // skip spaces in input
-            p++;
+    while (*p != '\0' && token_count < MAX_EXPR_LEN) {  // parse through inputted expression,
+        if (*p == ' ') {                                // if the current character is a space
+            p++;                                        // ignore the character
             continue;
         }
 
         // implicit multiplication detection and correction
-        if ((last_token_type == TOKEN_NUMBER || last_token_type == TOKEN_SYMBOL || last_token_type == TOKEN_RPAREN)
-            && (*p == '(' || isdigit(*p) || isalpha(*p))  // starts something new
-            && !is_operator(*p) && *p != ')') {           // make sure it's not already an operator
+        if ((last_token_type == TOKEN_NUMBER ||
+            last_token_type == TOKEN_SYMBOL ||
+            last_token_type == TOKEN_RPAREN) &&
+            (*p == '(' || isdigit(*p) || isalpha(*p))  // starts something new
+            && !is_operator(*p) && *p != ')') {        // make sure it's not already an operator
+
             expr->tokens[token_count++] = op_token_init(expr->token_pool, '*');
             last_token_type = TOKEN_OPERATOR;
             continue;

@@ -1,10 +1,10 @@
 cmake_minimum_required(VERSION 3.31)
-project(sym_calc C)
+project(symbolic-c C)
 
 set(CMAKE_C_STANDARD 23)
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Os")
 
-add_executable(sym_calc main.c
+add_executable(symbolic-c main.c
         src/token_t/operator_t/operator_t.h
         src/token_t/function_t/function_t.h
         src/token_t/symbol_t/symbol_t.h
