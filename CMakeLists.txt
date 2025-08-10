@@ -4,7 +4,9 @@ project(symbolic-c C)
 set(CMAKE_C_STANDARD 23)
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Os")
 
-add_executable(symbolic-c main.c
+# Source files
+set(SOURCES
+        main.c
         src/token_t/operator_t/operator_t.h
         src/token_t/function_t/function_t.h
         src/token_t/symbol_t/symbol_t.h
@@ -32,3 +34,10 @@ add_executable(symbolic-c main.c
         src/token_t/token_pool_t/token_pool_t.c
         src/token_t/function_t/function_t.c
 )
+
+if (WIN32)
+    # Include the resource file so the icon is compiled into the .exe
+    list(APPEND SOURCES resources/icon/variants/ruby/icon-ruby.rc)
+endif()
+
+add_executable(symbolic-c ${SOURCES})
