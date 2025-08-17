@@ -140,7 +140,7 @@ void print_tree(const ast_node_t* root) {
 }
 
 
-void append_token_string(const char* str, char* buffer, int buf_size, int* offset) {
+void append_token_string(const char* str, char* buffer, const int buf_size, int* offset) {
     while (*str && *offset < buf_size - 1) {
         buffer[(*offset)++] = *str++;
     }
@@ -155,6 +155,13 @@ void ast_to_string(ast_node_t* node, char* buffer, const int buf_size, int* offs
             break;
         case TOKEN_SYMBOL:
             append_token_string(node->token->symbol->symbol, buffer, buf_size, offset);
+            break;
+        case TOKEN_UNARY:
+            if (node->token->unary.op != UNARY_NEG) {
+                break;
+            }
+            // this is merely a bandaid
+            append_token_string("-", buffer, buf_size, offset);
             break;
 
         case TOKEN_OPERATOR:

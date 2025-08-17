@@ -33,6 +33,8 @@ set(SOURCES
         src/token_t/token_pool_t/token_pool_t.h
         src/token_t/token_pool_t/token_pool_t.c
         src/token_t/function_t/function_t.c
+        src/token_t/unary_t/unary_t.c
+        src/token_t/unary_t/unary_t.h
 )
 
 if (WIN32)

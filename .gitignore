@@ -104,3 +104,6 @@ http-client.private.env.json
 
 # Project-specific stuff
 /doc/
+
+# compiled files
+/resources/icon/variants/ruby/icon-ruby.res

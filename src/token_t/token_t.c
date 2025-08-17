@@ -49,6 +49,16 @@ token_t* sym_token_copy(token_pool_t* token_pool, const token_t* sym_token) {
     return copy;
 }
 
+token_t* unary_token_init(token_pool_t* pool, const unary_op_t unary) {
+    token_t* token = token_pool_alloc(pool);
+    if (!token) {
+        return NULL;
+    }
+    token->type = TOKEN_UNARY;
+    token->unary.op = unary;
+    return token;
+}
+
 token_t* op_token_init(token_pool_t* pool, const char op) {
     token_t* token = token_pool_alloc(pool);
     if (!token) return NULL;

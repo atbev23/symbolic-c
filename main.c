@@ -58,8 +58,8 @@ int main(void) {
 
         //print_tree(expr.root);
         //printf("\n");
-        token_pool_status(expr.token_pool);
-        node_pool_status(expr.node_pool);
+        //token_pool_status(expr.token_pool);
+        //node_pool_status(expr.node_pool);
     }
 
 
