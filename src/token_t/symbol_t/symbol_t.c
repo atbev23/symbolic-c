@@ -7,9 +7,9 @@
 
 symbol_t* sym_init(symbol_table_t* table, const char* symbol) {
     if (table->count >= MAX_SYMS || strlen(symbol) > MAX_SYM_LEN) {    // if the table is full or input is too long
-        return NULL;                                                    // can't create token, return NULL
+        return NULL;                                                   // can't create token, return NULL
     }
-    symbol_t* sym = &table->symbols[table->count++];
+    symbol_t* sym = &table->symbols[table->count++];                    // otherwise reserve a space in the symbol table
     sym->symbol = symbol;
     return sym;
 }
@@ -31,14 +31,3 @@ symbol_t* find_symbol(symbol_table_t* table, const char* c) {
 bool is_symbol(symbol_table_t* table, const char* c) {
     return find_symbol(table, c) != NULL;
 }
-/*
-inline ast_node_t* create_node(const ast_t* tree, const token_t* token, ast_node_t* left, ast_node_t* right) {
-    ast_node_t* node = node_pool_alloc(tree->pool);
-    if (!node) return NULL;
-
-    node->token = token;
-    node->left = left;
-    node->right = right;
-    return node;
-}
- */

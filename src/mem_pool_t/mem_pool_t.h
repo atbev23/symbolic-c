@@ -10,6 +10,8 @@
 #include <string.h>
 #include <stddef.h>
 
+// THIS FILE IS NOT USED
+
 // include this in the .c file for whatever you want to make a memory pool for and to use it elsewhere,
 // declare an external variable, ie. extern TYPE_pool_t GLOBAL_TYPE_POOL, and redeclare that in every .c file
 // you want to use it. (But i cant egt it to work)

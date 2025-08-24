@@ -5,7 +5,7 @@
 #ifndef OPERATION_T_H
 #define OPERATION_T_H
 
-typedef enum {
+typedef enum { // enum to hold named operator types
     ADD = 0,
     SUB,
     MUL,
@@ -13,16 +13,18 @@ typedef enum {
     POW
 } operator_type_t;
 
+// enum to hold named operator type associativity
 typedef enum {
     ASSOC_LEFT = 0,
     ASSOC_RIGHT
 } operator_assoc_t;
 
+// struct to hold all pertinent information relating to an operator
 typedef struct {
-    const char* operator; // just need a c string. its only 1 character
-    operator_type_t type;
-    int precedence;
-    operator_assoc_t associativity;
+    const char* operator;           // operator's equivalent character
+    operator_type_t type;           // operator's type
+    int precedence;                 // operator's precedence
+    operator_assoc_t associativity; // operator's associativity
 } operator_t;
 
 bool is_operator(char);
