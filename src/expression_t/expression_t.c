@@ -8,19 +8,20 @@
 // and then we can thread each term, simplify, then recombine
 // i don't think we will run into concurrency issues
 // because as terms (separated by +/-) they should have no
-// affect on eachother
+// effect on each other
 
 #include <stdlib.h>
 #include <string.h>
 #include "expression_t.h"
+#include "../token_t/token_pool_t/token_pool_t.h"
+#include "../node_t/node_pool_t/node_pool_t.h"
+#include "../stack_t/stack_t.h"
+#include "utils/utils.h"
 
 #include <ctype.h>
 #include <math.h>
 #include <pthread_time.h>
 #include <stdio.h>
-#include "../token_t/token_pool_t/token_pool_t.h"
-#include "../node_t/node_pool_t/node_pool_t.h"
-#include "../stack_t/stack_t.h"
 
 //#define DEBUG_EXPRESSION_INIT
 //#define DEBUG_COMMUTATIVE_PROPERTY
@@ -36,8 +37,8 @@ int expression_init(expression_t* expr, const char* input_expr, symbol_table_t* 
     expr->token_pool = &token_pool; // link the declared token pool to the expression
     expr->node_pool = &node_pool;   // link the declared node pool to the expression
 
-    strncpy(expr->expression, input_expr, sizeof(expr->expression));   // copy the inputted string to the expression
-    expr->expression[sizeof(expr->expression)-1] = '\0';                    // null terminate the string
+    strncpy(expr->expression, input_expr, sizeof(expr->expression));    // copy the inputted string to the expression
+    expr->expression[sizeof(expr->expression)-1] = '\0';                      // null terminate the string
 
 #ifdef DEBUG_EXPRESSION_INIT
     struct timespec start, end;
@@ -54,12 +55,15 @@ int expression_init(expression_t* expr, const char* input_expr, symbol_table_t* 
         return 0;                       // return immediately
     }
     // TODO: need to simplify until no more simplification can be done
+    expr->root = sub_to_add(expr->root, expr->token_pool, expr->node_pool);
+    expr->root = div_to_mul(expr->root, expr->token_pool, expr->node_pool);
+    expr->root = neg_to_mul(expr->root, expr->token_pool, expr->node_pool);
     expr->root = simplify(expr->root, expr->token_pool, expr->node_pool);   // simplify the expression using algebraic properties
     expr->root = simplify(expr->root, expr->token_pool, expr->node_pool);   // run the simplification algorithm again
     expr->root = simplify(expr->root, expr->token_pool, expr->node_pool);   // and again
 
-    if (!expr->root) {                                                      // if the expression simplifies to 0 or errored,
-        return 0;                                                           // return immediately
+    if (!expr->root) {  // if the expression simplifies to 0 or errored,
+        return 0;       // return immediately
     }
 
 #ifdef DEBUG_EXPRESSION_INIT
@@ -92,7 +96,11 @@ int tokenize(expression_t* expr, symbol_table_t* table) {
 
         if (*p == '-') {
             // Detect if this is a unary minus (not a binary operator)
-            const bool is_unary = token_count == 0 || last_token_type == TOKEN_OPERATOR || last_token_type == TOKEN_LPAREN;
+            const bool is_unary =
+                token_count == 0 ||
+                last_token_type == TOKEN_OPERATOR ||
+                last_token_type == TOKEN_LPAREN ||
+                last_token_type == TOKEN_UNARY;
 
             if (is_unary) {
                 expr->tokens[token_count++] = unary_token_init(expr->token_pool, UNARY_NEG);
@@ -175,14 +183,13 @@ int tokenize(expression_t* expr, symbol_table_t* table) {
     return token_count;
 }
 
-/* how to make ast? // leaving this here bc it makes me feel smart
+/* how to build ast from tokens?
  *
  * I am thinking we don't just move around tokens in postfix - we build the tree in it
  * meaning we need to make a node struct that has variables value, left, and right.
- * when we detect a number, add it to a buffer, when we detect a symbol, add it to the
- * buffer, when we detect an operator, the operator becomes value and the left becomes
- * the next operator and right becomes the value of buffer. then we just make a stack
- * of those nodes
+ * when we detect a number or symbol, add it to a buffer, when we detect an operator,
+ * the operator becomes the node's value and the left becomes the next operator and right
+ * becomes the value of buffer. then we just make a stack of those nodes.
 */
 
 // shunting yard algo but builds ast directly instead of returning postfix notation
@@ -199,17 +206,41 @@ int build_ast(expression_t* expr) {
     int i = 0;
     ast_node_t* node;
 
-    while (i < token_count) {
+    while (i < token_count) {       // loop through the tokens
         switch (tokens[i].type) {
-            case TOKEN_NUMBER:
-            case TOKEN_SYMBOL:
+            case TOKEN_NUMBER:      // if the token is a number or a symbol,
+            case TOKEN_SYMBOL:      // create a node and push to node stack
                 node = create_node(expr->node_pool, &tokens[i], NULL, NULL);
                 stack_push(&n, node);
-                break;
+                break;              // and break out of the switch statement so the next token can be evaluated
 
             case TOKEN_UNARY:
-                ast_node_t* operand = stack_pop(&n);
-                node = create_node(expr->node_pool, &tokens[i], NULL, operand);
+
+                i++;                            // move to the operand
+
+                if (i >= token_count) {         // if it is a floating unary
+                    break;                      // break out of case structure
+                }                               // if errors were being handled, maybe return an error
+
+                ast_node_t* operand = NULL;     // otherwise, try to collect the operand
+                switch (tokens[i].type) {
+                    case TOKEN_SYMBOL:          // if the operand is a symbol, number, or left parenthesis,
+                    case TOKEN_NUMBER:          //
+                    case TOKEN_LPAREN:
+                        operand = create_node(expr->node_pool, &tokens[i], NULL, NULL);
+                        break;
+
+                    case TOKEN_UNARY: {
+                        i--;
+                        continue;
+                    }
+
+                    default:
+                        // invalid
+                        break;
+                }
+
+                node = create_node(expr->node_pool, &tokens[i - 1], operand, NULL);
                 stack_push(&n, node);
                 break;
 
@@ -277,9 +308,6 @@ void free_subtree(token_pool_t* token_pool, node_pool_t* node_pool, ast_node_t* 
         return;
     }
 
-    // ast_node_t* left = node->left;
-    // ast_node_t* right = node->right;
-
     free_subtree(token_pool, node_pool, node->left);    // recurse to the bottom left of the subtree
     free_subtree(token_pool, node_pool, node->right);   // recurse to the bottom right of the subtree
 
@@ -287,6 +315,153 @@ void free_subtree(token_pool_t* token_pool, node_pool_t* node_pool, ast_node_t* 
         token_pool_free_token(token_pool, node->token); // free the token
     }
     node_pool_free_node(node_pool, node);               // then free the node
+}
+
+ast_node_t* sub_to_add(ast_node_t* node, token_pool_t* token_pool, node_pool_t* node_pool) {
+    if (!node) {
+        return NULL;
+    }
+
+    // if the node is a subtraction operator
+    if (node->token->type == TOKEN_OPERATOR && node->token->operator->type == SUB) {
+        // free the node's subtraction operator and replace it with addition
+        token_pool_free_token(token_pool, node->token);
+        node->token = op_token_init(token_pool, '+');
+
+        // if node's right child's token is a number, negate its value and overwrite the old token
+        if (node->right->token->type == TOKEN_NUMBER) {
+            const double val = node->right->token->number.value;
+            token_pool_free_token(token_pool, node->right->token);
+            node->right->token = num_token_init_double(token_pool, -val);
+        }
+
+        // otherwise, negate the right child with a unary minus
+        else {
+            ast_node_t* neg = node_pool_alloc(node_pool);
+            neg->token = unary_token_init(token_pool, UNARY_NEG);
+            neg->left = node->right;
+            neg->right = NULL;
+
+            node->right = neg;
+        }
+    }
+
+    // recurse through the tree top down
+    if (node->left) {
+        node->left = sub_to_add(node->left, token_pool, node_pool);
+    }
+
+    if (node->right) {
+        node->right = sub_to_add(node->right, token_pool, node_pool);
+    }
+
+    return node;
+}
+
+// a/b = a*(b^(-1)) or a/(b^c) = a*(b^(-c))
+ast_node_t* div_to_mul(ast_node_t* node, token_pool_t* token_pool, node_pool_t* node_pool) {
+    if (!node) {
+        return NULL;
+    }
+
+    if (node->left) {
+        node->left = div_to_mul(node->left, token_pool, node_pool);
+    }
+
+    if (node->right) {
+        node->right = div_to_mul(node->right, token_pool, node_pool);
+    }
+
+    if (node->token->type == TOKEN_UNARY) {
+        if (node->left) {
+            node->left = div_to_mul(node->left, token_pool, node_pool);
+        }
+        return node;
+    }
+
+    if (!(node->token->type == TOKEN_OPERATOR && node->token->operator->type == DIV)) {
+        return node;
+    }
+
+    ast_node_t* numerator = node->left;
+    ast_node_t* denominator = node->right;
+
+    // break the link from the div node
+    node->left = NULL;
+    node->right = NULL;
+
+    ast_node_t* reciprocal = NULL;
+
+    // if the denominator is a power operator
+    if (denominator->token->type == TOKEN_OPERATOR && denominator->token->operator->type == POW) {
+        reciprocal = denominator;
+        ast_node_t* exponent = reciprocal->right;          // collect the exponent
+
+        reciprocal->right = NULL;                          // break the link between power operator and its
+
+        if (exponent->token->type == TOKEN_NUMBER) {        // if the exponent is a number
+            const double val = exponent->token->number.value;   // collect it's value
+            reciprocal->right = node_pool_alloc(node_pool);
+            reciprocal->right->token = num_token_init_double(token_pool, -val); // negate the value
+            reciprocal->right->left = NULL;
+            reciprocal->right->right = NULL;
+        } else {
+            reciprocal->right = node_pool_alloc(node_pool);
+            reciprocal->right->token = unary_token_init(token_pool, UNARY_NEG);
+            reciprocal->right->right = exponent;
+        }
+
+    } else {                                                                // if the denominator is first order
+        reciprocal = node_pool_alloc(node_pool);                            // allocate a new node for the reciprocal
+        reciprocal->token = op_token_init(token_pool, '^');                 // reciprocal becomes a power operator
+        reciprocal->left = denominator;                                     // set the base to the denominator
+
+        reciprocal->right = node_pool_alloc(node_pool);                     // allocate another node to hold
+        reciprocal->right->token = num_token_init_double(token_pool, -1);   // an exponent with a value of -1
+        reciprocal->right->left = NULL;
+        reciprocal->right->right = NULL;
+    }
+
+    ast_node_t* new_root = node_pool_alloc(node_pool);
+    new_root->token = op_token_init(token_pool, '*');
+    new_root->left = numerator;
+    new_root->right = reciprocal;
+
+    return new_root;
+}
+
+ast_node_t* neg_to_mul(ast_node_t* node, token_pool_t* token_pool, node_pool_t* node_pool) {
+    if (!node) {
+        return NULL;
+    }
+
+    if (node->left) {
+        node->left = neg_to_mul(node->left, token_pool, node_pool);
+    }
+    if (node->right) {
+        node->right = neg_to_mul(node->right, token_pool, node_pool);
+    }
+
+    if (node->token->type == TOKEN_UNARY && node->token->unary.op == UNARY_NEG) {
+        ast_node_t* operand = node->left;
+
+        token_pool_free_token(token_pool, node->token);   // free the unary token
+
+        // Reuse the current node to become the '*' node
+        node->token = op_token_init(token_pool, '*');
+
+        // Allocate new -1 node
+        ast_node_t* neg_one = node_pool_alloc(node_pool);
+        neg_one->token = num_token_init_double(token_pool, -1);
+        neg_one->left = NULL;
+        neg_one->right = NULL;
+
+        node->left = neg_one;
+        node->right = operand;
+
+        return node;
+    }
+    return node;
 }
 
 ast_node_t* identity_property_add(ast_node_t* node, token_pool_t* token_pool, node_pool_t* node_pool) {
@@ -306,27 +481,27 @@ ast_node_t* identity_property_add(ast_node_t* node, token_pool_t* token_pool, no
     return node;
 }
 
-ast_node_t* identity_property_sub(ast_node_t* node, token_pool_t* token_pool, node_pool_t* node_pool) {
-    // if (!(node && node->token->type == TOKEN_OPERATOR && node->token->operator->type == SUB)) {
-    //     return node;
-    // }
-    if (!node->left || !node->right) {
-        return node;
-    }
-    // x-x = 0
-    if (branch_is_equal(node->left, node->right)) {
-        ast_node_t* zero_node = node_pool_alloc(node_pool);
-        zero_node->token = num_token_init(token_pool, "0");
-        zero_node->left = NULL;
-        zero_node->right = NULL;
-
-        // free original tree and return 0
-        free_subtree(token_pool, node_pool, node);
-        return zero_node;
-    }
-
-    return node;
-}
+// ast_node_t* identity_property_sub(ast_node_t* node, token_pool_t* token_pool, node_pool_t* node_pool) {
+//     // if (!(node && node->token->type == TOKEN_OPERATOR && node->token->operator->type == SUB)) {
+//     //     return node;
+//     // }
+//     if (!node->left || !node->right) {
+//         return node;
+//     }
+//     // x-x = 0
+//     if (branch_is_equal(node->left, node->right)) {
+//         ast_node_t* zero_node = node_pool_alloc(node_pool);
+//         zero_node->token = num_token_init(token_pool, "0");
+//         zero_node->left = NULL;
+//         zero_node->right = NULL;
+//
+//         // free original tree and return 0
+//         free_subtree(token_pool, node_pool, node);
+//         return zero_node;
+//     }
+//
+//     return node;
+// }
 
 ast_node_t* identity_property_mul(ast_node_t* node, token_pool_t* token_pool, node_pool_t* node_pool) {
     // if (!(node->token->type == TOKEN_OPERATOR && node->token->operator->type == MUL)) {
@@ -345,18 +520,18 @@ ast_node_t* identity_property_mul(ast_node_t* node, token_pool_t* token_pool, no
     return node;
 }
 
-ast_node_t* identity_property_div(ast_node_t* node, token_pool_t* token_pool, node_pool_t* node_pool) {
-    // if (!(node->token->type == TOKEN_OPERATOR && node->token->operator->type == DIV)) {
-    //     return node;
-    // }
-    // x/1 = x
-    if (node->right && node->right->token->type == TOKEN_NUMBER && node->right->token->number.value == 1) {
-        ast_node_t* left = copy_subtree(token_pool, node_pool, node->left);
-        free_subtree(token_pool, node_pool, node->left);
-        return left;
-    }
-    return node;
-}
+// ast_node_t* identity_property_div(ast_node_t* node, token_pool_t* token_pool, node_pool_t* node_pool) {
+//     // if (!(node->token->type == TOKEN_OPERATOR && node->token->operator->type == DIV)) {
+//     //     return node;
+//     // }
+//     // x/1 = x
+//     if (node->right && node->right->token->type == TOKEN_NUMBER && node->right->token->number.value == 1) {
+//         ast_node_t* left = copy_subtree(token_pool, node_pool, node->left);
+//         free_subtree(token_pool, node_pool, node->left);
+//         return left;
+//     }
+//     return node;
+// }
 
 ast_node_t* identity_property_pow(ast_node_t* node, token_pool_t* token_pool, node_pool_t* node_pool) {
     if (!(node->token->type == TOKEN_OPERATOR && node->token->operator->type == POW)) {
@@ -371,25 +546,25 @@ ast_node_t* identity_property_pow(ast_node_t* node, token_pool_t* token_pool, no
     return node;
 }
 
-ast_node_t* zero_property_sub(ast_node_t* node, token_pool_t* token_pool, node_pool_t* node_pool) {
-    if (!(node->token->type == TOKEN_OPERATOR && node->token->operator->type == SUB)) {
-        return node;
-    }
-    // x-0 = x
-    if (node->right && node->right->token->type == TOKEN_NUMBER && node->right->token->number.value == 0) {
-        ast_node_t* left = copy_subtree(token_pool, node_pool, node->left);
-        free_subtree(token_pool, node_pool, node);
-        return left;
-    }
-    // 0-x = -x
-    // TODO: cannot handle unary operators yet
-    // if (node->left && node->left->token->type == TOKEN_NUMBER && node->left->token->number.value == 0) {
-    //     ast_node_t* right = copy_subtree(token_pool, node_pool, node->right);
-    //     free_subtree(token_pool, node_pool, node);
-    //     return right;
-    // }
-    return node;
-}
+// ast_node_t* zero_property_sub(ast_node_t* node, token_pool_t* token_pool, node_pool_t* node_pool) {
+//     if (!(node->token->type == TOKEN_OPERATOR && node->token->operator->type == SUB)) {
+//         return node;
+//     }
+//     // x-0 = x
+//     if (node->right && node->right->token->type == TOKEN_NUMBER && node->right->token->number.value == 0) {
+//         ast_node_t* left = copy_subtree(token_pool, node_pool, node->left);
+//         free_subtree(token_pool, node_pool, node);
+//         return left;
+//     }
+//     // 0-x = -x
+//     // TODO: cannot handle unary operators yet
+//     // if (node->left && node->left->token->type == TOKEN_NUMBER && node->left->token->number.value == 0) {
+//     //     ast_node_t* right = copy_subtree(token_pool, node_pool, node->right);
+//     //     free_subtree(token_pool, node_pool, node);
+//     //     return right;
+//     // }
+//     return node;
+// }
 
 ast_node_t* zero_property_mul(token_pool_t* token_pool, node_pool_t* node_pool, ast_node_t* node) {
     if (!(node->token->type == TOKEN_OPERATOR && node->token->operator->type == MUL)) {
@@ -409,18 +584,18 @@ ast_node_t* zero_property_mul(token_pool_t* token_pool, node_pool_t* node_pool, 
     return node;
 }
 
-ast_node_t* zero_property_div(token_pool_t* token_pool, node_pool_t* node_pool, ast_node_t* node) {
-    if (!(node->token->type == TOKEN_OPERATOR && node->token->operator->type != DIV)) {
-        return node;
-    }
-    // 0/x = 0
-    if (node->left && node->left->token->type == TOKEN_NUMBER && node->left->token->number.value == 0) {
-        ast_node_t* left = copy_subtree(token_pool, node_pool, node->left);
-        free_subtree(token_pool, node_pool, node);
-        return left;
-    }
-    return node;
-}
+// ast_node_t* zero_property_div(token_pool_t* token_pool, node_pool_t* node_pool, ast_node_t* node) {
+//     if (!(node->token->type == TOKEN_OPERATOR && node->token->operator->type != DIV)) {
+//         return node;
+//     }
+//     // 0/x = 0
+//     if (node->left && node->left->token->type == TOKEN_NUMBER && node->left->token->number.value == 0) {
+//         ast_node_t* left = copy_subtree(token_pool, node_pool, node->left);
+//         free_subtree(token_pool, node_pool, node);
+//         return left;
+//     }
+//     return node;
+// }
 
 ast_node_t* zero_property_pow(token_pool_t* token_pool, node_pool_t* node_pool, ast_node_t* node) {
     if (!(node->token->type == TOKEN_OPERATOR && node->token->operator->type == POW)) {
@@ -443,6 +618,7 @@ ast_node_t* zero_property_pow(token_pool_t* token_pool, node_pool_t* node_pool, 
     }
     return node;
 }
+
 
 
 bool is_operator_node(const ast_node_t* node, const operator_type_t type) {
@@ -1268,24 +1444,11 @@ ast_node_t* simplify(ast_node_t* node, token_pool_t* token_pool, node_pool_t* no
                 node = commutative_property_add(token_pool, node_pool, node);
                 break;
 
-            case SUB:
-                node = identity_property_sub(node, token_pool, node_pool);
-                node = zero_property_sub(node, token_pool, node_pool);
-                break;
-
             case MUL:
                 node = identity_property_mul(node, token_pool, node_pool);
                 node = zero_property_mul(token_pool, node_pool, node);
                 node = distributive_property(token_pool, node_pool, node);
                 node = product_of_powers(token_pool, node_pool, node);
-                break;
-
-            case DIV:
-                node = identity_property_div(node, token_pool, node_pool);
-                node = zero_property_div(token_pool, node_pool, node);
-                node = distributive_property_div(node, token_pool, node_pool);
-                node = properties_of_division(token_pool, node_pool, node);
-                node = quotient_of_powers(token_pool, node_pool, node);
                 break;
 
             case POW:
@@ -1310,66 +1473,3 @@ ast_node_t* simplify(ast_node_t* node, token_pool_t* token_pool, node_pool_t* no
     }
     return node;
 }
-
-// bool simplify(ast_node_t** node, token_pool_t* token_pool, node_pool_t* node_pool) {
-//     if (!node || !*node) {
-//         return false;
-//     }
-//
-//     bool changed = false;
-//
-//     // recurse to the bottom of the tree
-//     if ((*node)->left)  changed |= simplify(&(*node)->left, token_pool, node_pool);
-//     if ((*node)->right) changed |= simplify(&(*node)->right, token_pool, node_pool);
-//
-//     ast_node_t* simplified = NULL;
-//     // if the current node is an operator
-//     if ((*node)->token->type == TOKEN_OPERATOR) {
-//         // apply simplification algorithms based on operator type
-//         switch ((*node)->token->operator->type) {
-//             case ADD:
-//                 simplified = zero_property(token_pool, node_pool, *node);
-//                 simplified = identity_property(token_pool, node_pool, simplified);
-//                 simplified = commutative_property_add(token_pool, node_pool, simplified);
-//                 break;
-//
-//             case SUB:
-//                 simplified = properties_of_subtraction(token_pool, node_pool, *node);
-//                 break;
-//
-//             case MUL:
-//                 simplified = zero_property(token_pool, node_pool, *node);
-//                 simplified = identity_property(token_pool, node_pool, simplified);
-//                 simplified = distributive_property(token_pool, node_pool, simplified);
-//                 //node = commutative_property_mul(expr->token_pool, expr->node_pool, node);
-//                 simplified = product_of_powers(token_pool, node_pool, simplified);
-//                 break;
-//
-//             case DIV:
-//                 simplified = properties_of_division(token_pool, node_pool, *node);
-//                 simplified = quotient_of_powers(token_pool, node_pool, simplified);
-//                 break;
-//
-//             case POW:
-//                 simplified = power_of_powers(token_pool, node_pool, *node);
-//                 break;
-//
-//             default:
-//                 break;
-//         }
-//
-//         if (simplified && !branch_is_equal(*node, simplified)) {
-//             *node = simplified;
-//             changed = true;
-//         }
-//
-//         // now try to fold constants
-//         if (*node && (*node)->token->type == TOKEN_OPERATOR && (*node)->left && (*node)->right &&
-//                 (*node)->left->token->type == TOKEN_NUMBER && (*node)->right->token->type == TOKEN_NUMBER) {
-//
-//             *node = solve(token_pool, node_pool, *node);
-//             changed = true;
-//             }
-//     }
-//     return changed;
-// }

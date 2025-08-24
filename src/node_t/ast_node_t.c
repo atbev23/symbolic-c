@@ -157,11 +157,17 @@ void ast_to_string(ast_node_t* node, char* buffer, const int buf_size, int* offs
             append_token_string(node->token->symbol->symbol, buffer, buf_size, offset);
             break;
         case TOKEN_UNARY:
-            if (node->token->unary.op != UNARY_NEG) {
-                break;
+            if (node->token->unary.op == UNARY_NEG) {
+                append_token_string("-", buffer, buf_size, offset);
             }
-            // this is merely a bandaid
-            append_token_string("-", buffer, buf_size, offset);
+            // Wrap operand in parentheses if it’s an operator (to preserve precedence)
+            if (node->left && node->left->token->type == TOKEN_OPERATOR) {
+                append_token_string("(", buffer, buf_size, offset);
+                ast_to_string(node->left, buffer, buf_size, offset);
+                append_token_string(")", buffer, buf_size, offset);
+            } else {
+                ast_to_string(node->left, buffer, buf_size, offset);
+            }
             break;
 
         case TOKEN_OPERATOR:
