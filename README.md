@@ -1,24 +1,25 @@
 # symbolic-c
 
-A symbolic computer algebra system (CAS) written in C, designed for embedded systems and custom hardware.  
-Features a command-line interface and modular architecture for parsing, constructing, and simplifying mathematical expressions.
+A symbolic computer algebra system (CAS) written in C, focused on building and simplifying algebraic expressions using a lightweight, statically-allocated architecture.  
+
+It features a command-line interface and modular architecture for parsing, constructing, and simplifying mathematical expressions.
 
 ---
 
 ## Features
 
 - **Tokenizes and Parses Expressions:**  
-  Handles numeric, symbolic, and operator tokens, including implicit multiplication (e.g., `2x`, `3(x+1)`).
+    - Handles numeric, symbolic, unary (only minus right now), and operator tokens, including implicit multiplication (e.g., `2x`, `3(x+1)`) with plans to expand to function tokens (e.g., `sin(x)`, `log(x)`).
 - **Builds Abstract Syntax Trees (ASTs):**  
-  Utilizes a direct shunting yard algorithm for robust AST construction.
-- **Algebraic Simplification:**  
-  Implements arithmetic and algebraic properties (identity, zero, distributive, commutative, associative, powers, etc.).
+  - Utilizes a direct shunting yard algorithm for AST construction.
+- **Expression Standardization:**
+  - Normalizes the AST by rewriting subtraction, division, and unary negation into a consistent additive and multiplicative form, providing a canonical representation for further symbolic simplification.
+- **Algebraic Simplification:**
+  - Implements arithmetic and algebraic properties (identity, zero, distributive, commutative, associative, powers, etc.).
 - **Memory-Efficient:**  
-  Uses custom token and node pools for memory management—ideal for embedded platforms.
+  - Uses custom token and node pools for memory management—ideal for constrained or embedded platforms.
 - **Designed for Extensibility:**  
-  Modular code structure allows for easy addition of new operators, functions, or simplification rules.
-- **Hardware Integration:**  
-  Targeting the Raspberry Pi Zero, with plans for a custom PCB and Arduino-based GUI for tactile input and display navigation.
+  - Modular code structure allows for easy addition (but not integration) of new operators, functions, or simplification rules.
 
 ---
 
@@ -28,10 +29,6 @@ Features a command-line interface and modular architecture for parsing, construc
 
 - **C Compiler:** GCC (Linux, Raspberry Pi), clang, or equivalent.
 - **CMake:** For build configuration (optional, but recommended).
-- **Hardware (Optional):**
-  - Raspberry Pi Zero (or other ARM SBC)
-  - Arduino (for GUI/Display, optional)
-  - Custom PCB (in development)
 
 ### Building the Project
 
@@ -70,24 +67,23 @@ You’ll be greeted with a command-line interface for entering and evaluating ex
 > 2 + 2 * 2
 6
 
-> x^2 + 2*x + 1
-(x + 1)^2
-
-> 3(a + b)
-3a + 3b
+> 3(x + y + 2)
+3x + 3y + 6
 ```
 
 ---
 
 ## Project Structure
 
+- `resources/`
+  - `icon` — a semi-custom icon with source files, .svg, .png, and Windows .res file
 - `src/`
   - `expression_t/` — Expression parsing, AST construction, and simplification
   - `token_t/` — Token types and pool management
   - `node_t/` — AST node types, pools, and tree logic
   - `stack_t/` — Simple stack implementation for parsing and evaluation
+  - `queue_t/` — Circular queue implementation
 - `main.c` — CLI entry point (to be added or extended)
-- `include/` — Header files
 
 ---
 
@@ -105,25 +101,11 @@ You’ll be greeted with a command-line interface for entering and evaluating ex
 - [x] Expression parsing and tokenization
 - [x] AST construction (shunting yard)
 - [x] Algebraic simplification (commutative, associative, distributive, powers)
+- [ ] Calculus (derivation, some integration)
 - [ ] CLI improvements (history, multi-line input)
 - [ ] Add support for functions (`sin`, `cos`, etc.)
 - [ ] Error handling and reporting
-- [ ] Hardware GUI integration (Arduino)
 - [ ] Custom PCB design and documentation
-
----
-
-## Contributing
-
-Pull requests and suggestions are welcome!  
-If you have ideas for new features, bug reports, or want to help with hardware, open an issue or contact [atbev23](https://github.com/atbev23).
-
----
-
-## License
-
-MIT License.  
-See [LICENSE](LICENSE) for details.
 
 ---
 
@@ -131,3 +113,4 @@ See [LICENSE](LICENSE) for details.
 
 - [Wikipedia: Computer Algebra Systems](https://en.wikipedia.org/wiki/Computer_algebra_system)
 - [Shunting Yard Algorithm](https://en.wikipedia.org/wiki/Shunting_yard_algorithm)
+- [Intrduction to Circular Queue](https://www.geeksforgeeks.org/dsa/introduction-to-circular-queue/)

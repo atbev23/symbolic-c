@@ -6,13 +6,16 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Os")
 
 # Platform-specific flags
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm")
         message(STATUS "Detected ARM Linux — adding ARMv7 flags")
         set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -march=armv7-a")
+
     elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64")
         message(STATUS "Detected x86_64 Linux — adding native arch flags")
         set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -march=native")
     endif()
+
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Windows")
     message(STATUS "Windows build — no ARM flags")
 endif()
