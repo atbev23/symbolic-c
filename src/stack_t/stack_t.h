@@ -5,6 +5,8 @@
 #ifndef STACK_T_H
 #define STACK_T_H
 
+#include "stdbool.h"
+
 #define MAX_STACK_SIZE 32
 
 typedef struct stack_t stack_t;

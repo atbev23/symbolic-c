@@ -5,6 +5,7 @@
 #ifndef SYMBOL_T_H
 #define SYMBOL_T_H
 
+#include <stdbool.h>
 #define MAX_SYM_LEN 1 // room for 1 char and changing this
 #define MAX_SYMS 8
 

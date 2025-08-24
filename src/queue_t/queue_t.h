@@ -5,6 +5,8 @@
 #ifndef QUEUE_T_H
 #define QUEUE_T_H
 
+#include "stdbool.h"
+
 #define MAX_QUEUE_SIZE 128
 
 typedef struct {

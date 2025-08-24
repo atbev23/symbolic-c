@@ -4,6 +4,7 @@
 
 #ifndef OPERATION_T_H
 #define OPERATION_T_H
+#include <stdbool.h>
 
 typedef enum { // enum to hold named operator types
     ADD = 0,

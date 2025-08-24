@@ -5,6 +5,7 @@
 
 #include <stddef.h>
 #include <string.h>
+#include <stdbool.h>
 
 static const function_t functions[] = {
     {"sqrt", SQRT},

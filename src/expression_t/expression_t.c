@@ -22,6 +22,7 @@
 #include <math.h>
 #include <pthread_time.h>
 #include <stdio.h>
+#include <stdbool.h>
 
 //#define DEBUG_EXPRESSION_INIT
 //#define DEBUG_COMMUTATIVE_PROPERTY
@@ -623,7 +624,7 @@ bool is_operator_node(const ast_node_t* node, const operator_type_t type) {
     return node && node->token->type == TOKEN_OPERATOR && node->token->operator->type == type;
 }
 
-void collect_terms(/*token_pool_t* token_pool,node_pool_t* node_pool,*/ const ast_node_t* node, stack_t* stack, const operator_type_t type) {
+void collect_terms(const ast_node_t* node, stack_t* stack, const operator_type_t type) {
     if (!node) {
         return;
     }
@@ -881,10 +882,6 @@ ast_node_t* commutative_property_add(token_pool_t* token_pool, node_pool_t* node
     print_ast_stack(&terms);
 #endif
 
-    // sort the nodes by comparing each node's token's type (number->symbol->operator)
-    // using a c standard sorting algorithm. i think it, quick sort, is pretty nifty in both the
-    // algorithm's simplicity, and the fact that the c standard library provides few other
-    // niceties to get excited about (that I have come across anyway)
     qsort(terms.items, terms.top + 1, sizeof(ast_node_t*), compare_types); // c stdio.h function
     // TODO: when i implement functions, unary operators, etc. check to make sure this still works
 
@@ -953,10 +950,10 @@ ast_node_t* commutative_property_add(token_pool_t* token_pool, node_pool_t* node
 
 // Base group to hold a unique base with accumulated exponents
 typedef struct {
-    ast_node_t* base;           // The base subtree (e.g. 'x', '2', '(a+b)')
-    double exponent_sum;        // Sum of numeric exponents
+    ast_node_t* base;           // the base subtree (e.g. 'x', '2', '(a+b)')
+    double exponent_sum;        // sum of numeric exponents
     stack_t symbolic_exponents; // stack of symbolic exponent nodes (non-numeric)
-    bool exponent_is_one;
+    bool exponent_is_one;       // flag meaning we need to append ^1
 } base_group_t;
 
 // list of base groups in mul chain
@@ -1024,7 +1021,6 @@ static void normalize_node(ast_node_t* node, ast_node_t** base_out, ast_node_t**
     } else {
         *base_out = node;
 
-        // Allocate exponent node = 1
         ast_node_t* exp_node = node_pool_alloc(node_pool);
         exp_node->token = num_token_init_double(token_pool, 1);
         exp_node->left = NULL;
@@ -1196,43 +1192,6 @@ ast_node_t* product_of_powers(token_pool_t* token_pool, node_pool_t* node_pool, 
     ast_node_t* subroot = reconstruct_product(&groups, token_pool, node_pool);
     free_subtree(token_pool, node_pool, node);
     return subroot;
-}
-
-ast_node_t* quotient_of_powers(token_pool_t* token_pool, node_pool_t* node_pool, ast_node_t* node) {
-    if (!node || node->token->type != TOKEN_OPERATOR || node->token->operator->type != DIV) {
-        return node;
-    }
-
-    ast_node_t* left = node->left;
-    ast_node_t* right = node->right;
-
-    if (!left || !right ||
-        left->token->type != TOKEN_OPERATOR || left->token->operator->type != POW ||
-        right->token->type != TOKEN_OPERATOR || right->token->operator->type != POW) {
-        return node;
-    }
-
-    ast_node_t* a1 = left->left;
-    ast_node_t* a2 = right->left;
-
-    if (!branch_is_equal(a1, a2)) {
-        return node;
-    }
-
-    // Create m + n
-    ast_node_t* diff = node_pool_alloc(node_pool);
-    diff->token = op_token_init(token_pool, '-');
-    diff->left = copy_subtree(token_pool, node_pool, left->right);
-    diff->right = copy_subtree(token_pool, node_pool, right->right);
-
-    // Create a^(m + n)
-    ast_node_t* result = node_pool_alloc(node_pool);
-    result->token = op_token_init(token_pool, '^');
-    result->left = copy_subtree(token_pool, node_pool, a1);
-    result->right = diff;
-
-    //free_subtree(token_pool, node_pool, node); // uncomment when you're ready to manage memory
-    return result;
 }
 
 /* The product of powers function detects and simplifies expressions in the form of a^m * a^n into
