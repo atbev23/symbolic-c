@@ -95,7 +95,7 @@ int tokenize(expression_t* expr, symbol_table_t* table) {
         }
 
         if (*p == '-') {
-            // Detect if this is a unary minus (not a binary operator)
+            // detect if this is a unary minus, not binary minus
             const bool is_unary =
                 token_count == 0 ||
                 last_token_type == TOKEN_OPERATOR ||
@@ -122,9 +122,7 @@ int tokenize(expression_t* expr, symbol_table_t* table) {
             continue;
         }
 
-        // handle number
         if (isdigit(*p)) {
-            // if the current character is a number
             int j = 0;
             while (isdigit(*p) || *p == '.') {
                 if (j < MAX_LEXEME_LEN - 1) {
@@ -138,7 +136,7 @@ int tokenize(expression_t* expr, symbol_table_t* table) {
             memset(buf, 0, MAX_LEXEME_LEN);
             continue;
         }
-    // Handle symbol
+
         if (isalpha(*p)) {
             int j = 0;
             while (isalpha(*p) || *p == '_') {
@@ -156,7 +154,7 @@ int tokenize(expression_t* expr, symbol_table_t* table) {
             memset(buf, 0, MAX_LEXEME_LEN);
         }
 
-            // Handle operator
+            // handle operator
         if (is_operator(*p)) {
             expr->tokens[token_count++] = op_token_init(expr->token_pool, *p);  //  .type = TOKEN_OPERATOR,
             last_token_type = TOKEN_OPERATOR;
@@ -177,7 +175,7 @@ int tokenize(expression_t* expr, symbol_table_t* table) {
             p++;
             continue;
         }
-        // Unknown character
+        // unknown character
         p++;
     }
     return token_count;
@@ -447,10 +445,10 @@ ast_node_t* neg_to_mul(ast_node_t* node, token_pool_t* token_pool, node_pool_t* 
 
         token_pool_free_token(token_pool, node->token);   // free the unary token
 
-        // Reuse the current node to become the '*' node
+        // reuse the current node to become the '*' node
         node->token = op_token_init(token_pool, '*');
 
-        // Allocate new -1 node
+        // allocate new -1 node
         ast_node_t* neg_one = node_pool_alloc(node_pool);
         neg_one->token = num_token_init_double(token_pool, -1);
         neg_one->left = NULL;
@@ -711,66 +709,111 @@ void associative_property(token_pool_t* token_pool, node_pool_t* node_pool, ast_
  *
 */
 
-ast_node_t* distributive_property(token_pool_t* token_pool, node_pool_t* node_pool, ast_node_t* node) {
-    if (!node || node->token->type != TOKEN_OPERATOR || node->token->operator->type != MUL) {
+#define MAX_TERMS 16 // we can store up to 16 terms
+#define MAX_TERM_LEN 16 // each term can store up to 16 nodes, that's 256 total nodes that can be stored
+
+typedef struct {
+    ast_node_t* root;
+    // bool term_is_negative;
+} term_t;
+
+typedef struct {
+    term_t terms[MAX_TERMS];
+    int term_count;
+} terms_t;
+
+static void collect_terms2(ast_node_t* node, terms_t* terms) {
+    if (!node) {
+        return;
+    }
+
+    if (node->token->type == TOKEN_OPERATOR) {
+        if (node->token->operator->type == ADD) {
+            collect_terms2(node->left, terms);
+            collect_terms2(node->right, terms);
+            return;
+        }
+
+        // if (node->token->operator->type == SUB) {
+        //     collect_terms2(node->left, terms, negate);
+        //     collect_terms2(node->right, terms, !negate);
+        //     return;
+        // }
+    }
+
+    if (terms->term_count < MAX_TERMS) {
+        term_t* term = &terms->terms[terms->term_count++];
+        term->root = node;
+    }
+}
+
+ast_node_t* rebuild_dist_mul_tree(const terms_t* terms, const ast_node_t* multiplier,
+                                  token_pool_t* token_pool, node_pool_t* node_pool) {
+    if (!(terms && multiplier)) {
+        return NULL;
+    }
+
+    ast_node_t* new_tree = NULL;
+
+    for (int i = 0; i < terms->term_count; i++) {
+        ast_node_t* mul_node = node_pool_alloc(node_pool);
+        mul_node->token = op_token_init(token_pool, '*');
+        mul_node->left = copy_subtree(token_pool, node_pool, terms->terms[i].root);
+        mul_node->right = copy_subtree(token_pool, node_pool, multiplier);
+
+        if (!new_tree) {
+            new_tree = mul_node;
+        } else {
+            ast_node_t* op_node = node_pool_alloc(node_pool);
+            op_node->token = op_token_init(token_pool, '+');
+            op_node->left = new_tree;
+            op_node->right = mul_node;
+            new_tree = op_node;
+        }
+    }
+    return new_tree;
+}
+// TODO: both sides can be sums, my function only handles one or the other
+ast_node_t* distributive_property(ast_node_t* node, token_pool_t* token_pool, node_pool_t* node_pool) {
+    if (!(node && node->token->type == TOKEN_OPERATOR && node->token->operator->type == MUL)) {
+        return node;
+    }
+    // what we want to do
+
+    // check if the operator is * and one or both children are sums
+    // if so, flatten the expression
+    // collect all terms (split on +/-, so a term could be something like '2*x^2')
+    // flatten anything that can be flattened,
+    // rebuild the tree, appending each term's root to a mul node and the multiplier
+
+    const bool left_is_sum = node->left &&
+         node->left->token->type == TOKEN_OPERATOR &&
+         node->left->token->operator->type == ADD;
+
+    const bool right_is_sum = node->right &&
+         node->right->token->type == TOKEN_OPERATOR &&
+         node->right->token->operator->type == ADD;
+
+    if (!left_is_sum && !right_is_sum) {
         return node;
     }
 
-    // Case: (b + c) * a
-    if (node->left && node->left->token->type == TOKEN_OPERATOR &&
-        node->left->token->operator->type == ADD) {
+    terms_t terms = {0};
+    ast_node_t* multiplicand;
+    ast_node_t* multiplier;
 
-        const ast_node_t* a = node->right;
-        const ast_node_t* b = node->left->left;
-        const ast_node_t* c = node->left->right;
+    if (left_is_sum) {
+        multiplicand = node->left;
+        multiplier = node->right;
+    } else {
+        multiplicand = node->right;
+        multiplier = node->left;
+    }
 
-        ast_node_t* ab = node_pool_alloc(node_pool);
-        ab->token = op_token_init(token_pool, '*');
-        ab->left = copy_subtree(token_pool, node_pool, a);
-        ab->right = copy_subtree(token_pool, node_pool, b);
-
-        ast_node_t* ac = node_pool_alloc(node_pool);
-        ac->token = op_token_init(token_pool, '*');
-        ac->left = copy_subtree(token_pool, node_pool, a);
-        ac->right = copy_subtree(token_pool, node_pool, c);
-
-        ast_node_t* new_root = node_pool_alloc(node_pool);
-        new_root->token = op_token_init(token_pool, '+');
-        new_root->left = ab;
-        new_root->right = ac;
-
-        free_subtree(token_pool, node_pool, node);
-        return new_root;
-        }
-
-    // Optional: Case a * (b + c)
-    if (node->right && node->right->token->type == TOKEN_OPERATOR &&
-        node->right->token->operator->type == ADD) {
-
-        const ast_node_t* a = node->left;
-        const ast_node_t* b = node->right->left;
-        const ast_node_t* c = node->right->right;
-
-        ast_node_t* ab = node_pool_alloc(node_pool);
-        ab->token = op_token_init(token_pool, '*');
-        ab->left = copy_subtree(token_pool, node_pool, a);
-        ab->right = copy_subtree(token_pool, node_pool, b);
-
-        ast_node_t* ac = node_pool_alloc(node_pool);
-        ac->token = op_token_init(token_pool, '*');
-        ac->left = copy_subtree(token_pool, node_pool, a);
-        ac->right = copy_subtree(token_pool, node_pool, c);
-
-        ast_node_t* new_node = node_pool_alloc(node_pool);
-        new_node->token = op_token_init(token_pool, '+');
-        new_node->left = ab;
-        new_node->right = ac;
-
-        free_subtree(token_pool, node_pool, node);
-        return new_node;
-        }
-
-    return node;
+    collect_terms2(multiplicand, &terms);
+    ast_node_t* new_tree = rebuild_dist_mul_tree(&terms, multiplier, token_pool, node_pool);
+    free_subtree(token_pool, node_pool, node);
+    return new_tree;
 }
 
 int compare_types(const void* a, const void* b) {
@@ -882,163 +925,7 @@ ast_node_t* commutative_property_add(token_pool_t* token_pool, node_pool_t* node
     return rebuild_commutative_subtree(token_pool, node_pool, &terms, node->token->operator->operator);
 }
 
-ast_node_t* properties_of_subtraction(token_pool_t* token_pool, node_pool_t* node_pool, ast_node_t* node) {
-    if (!node || node->token->type != TOKEN_OPERATOR || node->token->operator->type != SUB) {
-        return node;
-    }
 
-    // Case: x - 0 => x
-    if (node->right->token->type == TOKEN_NUMBER && node->right->token->number.value == 0) {
-        ast_node_t* new_node = copy_subtree(token_pool, node_pool, node->left);
-        free_subtree(token_pool, node_pool, node);
-        return new_node;
-    }
-
-    // Case: x - x => 0
-    // NOTE: this compares pointer equality. If you want structural equality, write node_equals().
-    if (branch_is_equal(node->left, node->right)) {
-        ast_node_t* zero_node = node_pool_alloc(node_pool);
-        zero_node->token = num_token_init_double(token_pool, 0);
-        zero_node->left = NULL;
-        zero_node->right = NULL;
-
-        free_subtree(token_pool, node_pool, node);
-        return zero_node;
-    }
-
-    return node;
-}
-
-ast_node_t* properties_of_division(token_pool_t* token_pool, node_pool_t* node_pool, ast_node_t* node) {
-    if (!node || node->token->type != TOKEN_OPERATOR || node->token->operator->type != DIV) {
-        return node;
-    }
-    if (!node->left || !node->right) {
-        return node;
-        // TODO: Should return error, can't have floating div op, but should also never happen unless someone (me)
-        //     : purposely inputs it
-    }
-
-    // TODO: should i be checking if this is a const? ie. number, symbol, or special char (pi, e, ...; not implemented)
-    if (node->left->token->type == TOKEN_SYMBOL || node->right->token->type == TOKEN_SYMBOL) {
-        // if 0 div x (ie. 0/1)
-        if (node->left->token->type == TOKEN_NUMBER && node->left->token->number.value == 0) {
-            ast_node_t* kept = node->left;
-
-            token_pool_free_token(token_pool, node->right->token);
-            node_pool_free_node(node_pool, node->right);
-
-            token_pool_free_token(token_pool, node->token);
-            node_pool_free_node(node_pool, node);  // free current node
-            return kept;
-        }
-        // div by 0
-        if (node->right->token->type == TOKEN_NUMBER && node->right->token->number.value == 0) {
-            // this function doesn't work
-            // TODO: should return error
-            //     : idea: return an error node
-            free_subtree(token_pool, node_pool, node);
-            return NULL;
-        }
-
-        if (node->right->token->number.value == 1) {
-            ast_node_t* kept = node->right;
-
-            token_pool_free_token(token_pool, node->left->token);
-            node_pool_free_node(node_pool, node->left);
-
-            token_pool_free_token(token_pool, node->token);
-            node_pool_free_node(node_pool, node);  // free current node
-            return kept;
-        }
-    }
-    return node;
-}
-
-#define MAX_TERMS 16 // we can store up to 16 terms
-#define MAX_TERM_LEN 16 // each term can store up to 16 nodes, that's 256 total nodes that can be stored
-
-typedef struct {
-    ast_node_t* root;
-    bool term_is_negative;
-} term_t;
-
-typedef struct {
-    term_t terms[MAX_TERMS];
-    int term_count;
-} terms_t;
-
-static void collect_terms2(ast_node_t* node, terms_t* terms, const bool negate) {
-    if (!node) {
-        return;
-    }
-
-    if (node->token->type == TOKEN_OPERATOR) {
-        if (node->token->operator->type == ADD) {
-            collect_terms2(node->left, terms, negate);
-            collect_terms2(node->right, terms, negate);
-            return;
-        }
-
-        if (node->token->operator->type == SUB) {
-            collect_terms2(node->left, terms, negate);
-            collect_terms2(node->right, terms, !negate);
-            return;
-        }
-    }
-
-    if (terms->term_count < MAX_TERMS) {
-        term_t* term = &terms->terms[terms->term_count++];
-        term->root = node;
-        term->term_is_negative = negate;
-    }
-}
-
-ast_node_t* rebuild_dist_div_tree(const terms_t* terms, const ast_node_t* denominator,
-                                  token_pool_t* token_pool, node_pool_t* node_pool) {
-    if (!(terms && denominator)) {
-        return NULL;
-    }
-
-    ast_node_t* new_tree = NULL;
-
-    for (int i = 0; i < terms->term_count; i++) {
-        ast_node_t* div_node = node_pool_alloc(node_pool);
-        div_node->token = op_token_init(token_pool, '/');
-        div_node->left = copy_subtree(token_pool, node_pool, terms->terms[i].root);
-        div_node->right = copy_subtree(token_pool, node_pool, denominator);
-
-        if (!new_tree) {
-            new_tree = div_node;
-        } else {
-            ast_node_t* op_node = node_pool_alloc(node_pool);
-            op_node->token = op_token_init(token_pool, terms->terms[i].term_is_negative ? '-' : '+');
-            op_node->left = new_tree;
-            op_node->right = div_node;
-            new_tree = op_node;
-        }
-    }
-    return new_tree;
-}
-
-ast_node_t* distributive_property_div(ast_node_t* node, token_pool_t* token_pool, node_pool_t* node_pool) {
-    if (!(node && node->token->type == TOKEN_OPERATOR && node->token->operator->type == DIV)) {
-        return node;
-    }
-    // what we want to do
-
-    // check if the operator is /,
-    // if so, flatten the expression
-    // collect all terms (split on +/-, so could be something like '2*x^2')
-    // flatten anything that can be flattened,
-    // rebuild the tree, adding division nodes to the right side of each term
-
-    terms_t terms = {0};
-    collect_terms2(node->left, &terms, false);
-    ast_node_t* new_tree = rebuild_dist_div_tree(&terms, node->right, token_pool, node_pool);
-    free_subtree(token_pool, node_pool, node);
-    return new_tree;
-}
 
 /* The product of powers function detects and simplifies expressions in the form of a^m * a^n into
  * the form of a^(m + n), where a, m, and n are arbitrary nodes. The function must return a node,
@@ -1447,7 +1334,7 @@ ast_node_t* simplify(ast_node_t* node, token_pool_t* token_pool, node_pool_t* no
             case MUL:
                 node = identity_property_mul(node, token_pool, node_pool);
                 node = zero_property_mul(token_pool, node_pool, node);
-                node = distributive_property(token_pool, node_pool, node);
+                node = distributive_property(node, token_pool, node_pool);
                 node = product_of_powers(token_pool, node_pool, node);
                 break;
 
